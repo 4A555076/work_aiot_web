@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import dayjs from "dayjs";
-import { MapPinned } from 'lucide-react';
+import { MapPinned } from "lucide-react";
+
 import BaseInput from "@/components/common/input/BaseInput";
 import BaseButton from "@/components/common/button/BaseButton";
 import BaseTable from "@/components/common/table/BaseTable";
@@ -11,11 +12,11 @@ import BaseApiLoaderWrapper from "@/components/common/api/ApiLoaderWrapper";
 import ExportCSVButton from "@/components/common/export/ExportCSVButton";
 import ExportExcelButton from "@/components/common/export/ExportExcelButton";
 import ExportPDFButton from "@/components/common/export/ExportPDFButton";
+
 import { useFireProjects, useFireRecord } from "@/hook/useFireRecord";
 
 
 export default function FireRecordPage() {
-  
   const [form, setForm] = useState({
     startTime: "",
     endTime: "",
@@ -47,7 +48,7 @@ export default function FireRecordPage() {
           if (!Event || !SN) return;
 
           const url = `http://125.227.111.238:81/iot/${Event}/${SN}`;
-          window.open(url, "_blank", "noopener,noreferrer");
+         window.open(url, "_blank", "noopener,noreferrer");
         };
 
         return (
@@ -73,7 +74,6 @@ export default function FireRecordPage() {
   ];
 
   const validate = () => {
-
     if (!form.startTime || !form.endTime || !form.project) {
       return "請確認已填寫：開始時間、結束時間、事件類型";
     }
@@ -92,7 +92,7 @@ export default function FireRecordPage() {
       startTime: dayjs(form.startTime).format("YYYY-MM-DD HH:mm"),
       endTime: dayjs(form.endTime).format("YYYY-MM-DD HH:mm"),
       project: form.project,
-      squadCount: form.squadCount ? form.squadCount : 0,
+      squadCount: form.squadCount || 0,
     });
   };
 
@@ -101,33 +101,58 @@ export default function FireRecordPage() {
 
     setForm((prev) => ({
       ...prev,
-      startTime: dayjs().subtract(3, "day").startOf("day").format("YYYY-MM-DD HH:mm"),
-      endTime: dayjs().endOf("day").format("YYYY-MM-DD HH:mm"),
+
+      startTime: dayjs()
+        .subtract(3, "day")
+        .startOf("day")
+        .format("YYYY-MM-DDTHH:mm"),
+
+      endTime: dayjs()
+        .endOf("day")
+        .format("YYYY-MM-DDTHH:mm"),
     }));
   }, []);
 
   useEffect(() => {
     if (!fireProjectsData?.length) return;
 
+    const project =
+      fireProjectsData[0].value ??
+      fireProjectsData[0];
+
+    const startTime = dayjs()
+      .subtract(3, "day")
+      .startOf("day")
+      .format("YYYY-MM-DDTHH:mm");
+
+    const endTime = dayjs()
+      .endOf("day")
+      .format("YYYY-MM-DDTHH:mm");
+
     setForm((prev) => ({
       ...prev,
-      project: fireProjectsData[0].value ?? fireProjectsData[0],
+      startTime,
+      endTime,
+      project,
     }));
 
     fetchFireReport({
-      ...form,
-      project: fireProjectsData[0].value ?? fireProjectsData[0],
+      startTime: dayjs(startTime).format("YYYY-MM-DD HH:mm"),
+      endTime: dayjs(endTime).format("YYYY-MM-DD HH:mm"),
+      project,
+      squadCount: 0,
     });
   }, [fireProjectsData]);
 
-
   return (
     <div className="space-y-8">
-      
       <PageTitle description="火災出勤與事件紀錄" />
 
-      <BaseCard title="查詢條件" subtitle="依時間、事件類型與出動分隊數篩選火災紀錄">
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <BaseCard
+        title="查詢條件"
+        subtitle="依時間、事件類型與出動分隊數篩選火災紀錄"
+      >
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <BaseInput
             label="開始時間"
             type="datetime-local"
@@ -142,7 +167,7 @@ export default function FireRecordPage() {
             value={form.endTime}
             onChange={(e) => setForm({ ...form, endTime: e.target.value })}
             min={form.startTime}
-            max={dayjs().endOf("day").format("YYYY-MM-DD HH:mm")}
+            max={dayjs().endOf("day").format("YYYY-MM-DDTHH:mm")}
           />
 
           <BaseSelect
@@ -155,7 +180,7 @@ export default function FireRecordPage() {
           <BaseInput
             label="出動分隊數(選填)≥"
             type="number"
-            value={form.squadCount ? form.squadCount : ''}
+            value={form.squadCount ? form.squadCount : ""}
             onChange={(e) => setForm({ ...form, squadCount: e.target.value })}
             placeholder="選填"
           />
@@ -163,7 +188,7 @@ export default function FireRecordPage() {
 
         <div className="mt-5 flex justify-end border-t border-border pt-5">
           <BaseButton
-            onClick={handleSearch}   
+            onClick={handleSearch}
             className="w-full sm:w-auto"
           >
             查詢
@@ -176,9 +201,23 @@ export default function FireRecordPage() {
         subtitle={`共 ${fireRecordData.length} 筆資料`}
         headerRight={
           <div className="flex flex-wrap gap-2">
-            <ExportCSVButton data={fireRecordData} columns={columns} filename="火災紀錄"/>
-            <ExportExcelButton data={fireRecordData} columns={columns} filename="火災紀錄"/>
-            <ExportPDFButton data={fireRecordData} columns={columns} filename="火災紀錄"/>
+            <ExportCSVButton
+              data={fireRecordData}
+              columns={columns}
+              filename="火災紀錄"
+            />
+
+            <ExportExcelButton
+              data={fireRecordData}
+              columns={columns}
+              filename="火災紀錄"
+            />
+
+            <ExportPDFButton
+              data={fireRecordData}
+              columns={columns}
+              filename="火災紀錄"
+            />
           </div>
         }
       >
@@ -186,10 +225,12 @@ export default function FireRecordPage() {
           isLoading={loadingFireRecord}
           isError={errorFireRecord}
         >
-          <BaseTable data={fireRecordData} columns={columns}/>
+          <BaseTable
+            data={fireRecordData}
+            columns={columns}
+          />
         </BaseApiLoaderWrapper>
       </BaseCard>
-
     </div>
   );
 }

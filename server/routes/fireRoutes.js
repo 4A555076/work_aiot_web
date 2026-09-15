@@ -80,7 +80,7 @@ router.post('/fire/reports', verifyToken, async (req, res) => {
       SELECT 
           L.[SN], 
           L.[ENID], 
-          L.[cDate], 
+          CONVERT(VARCHAR(19), L.[cDate], 126) AS cDate,
           L.[conST], 
           L.[Ack], 
           C.[Event],
@@ -89,7 +89,7 @@ router.post('/fire/reports', verifyToken, async (req, res) => {
           parsed.detail,
           parsed.status,
           parsed.squadCount,
-          parsed.updateTime,
+          CONVERT(VARCHAR(19), TRY_CAST(parsed.updateTime AS DATETIME), 126) AS updateTime,
           RIGHT('0' + CAST(DATEDIFF(MINUTE, L.[cDate], TRY_CAST(parsed.updateTime AS DATETIME)) / 60 AS VARCHAR), 2) + '小時' + 
           RIGHT('0' + CAST(DATEDIFF(MINUTE, L.[cDate], TRY_CAST(parsed.updateTime AS DATETIME)) % 60 AS VARCHAR), 2) + '分鐘' AS durationMinute
       FROM [AIOT].[dbo].[logEventN] L

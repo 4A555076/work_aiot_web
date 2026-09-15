@@ -1,13 +1,12 @@
 import { useState } from "react";
 import dayjs from 'dayjs'
-import utc from "dayjs/plugin/utc";
-dayjs.extend(utc);
-import { getFireReport, getFireProjects } from "@/api/fire";
-
+import { 
+    getFireReport, 
+    getFireProjects 
+} from "@/api/fire";
 
 
 export function useFireProjects() {
-
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -27,7 +26,12 @@ export function useFireProjects() {
             setData(options);
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "載入失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);
@@ -64,14 +68,19 @@ export function useFireRecord() {
             const res = await getFireReport(payload);
             const formatted = (res || []).map((item) => ({
                 ...item,
-                cDate: item.cDate ? dayjs(item.cDate).utc().format("YYYY-MM-DD HH:mm") : "",
+                cDate: item.cDate ? dayjs(item.cDate).format("YYYY-MM-DD HH:mm") : "",
                 detail: item.detail ? item.detail.split("/")[0].trim() : "",
             }));
 
             setData(formatted);
         } catch (err) {
-            console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "載入失敗";
+            onsole.error("error:", err);
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);
