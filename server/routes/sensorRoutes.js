@@ -172,7 +172,22 @@ router.post('/sensors/health-reports', verifyToken, async (req, res) => {
     const aiotDb = await getConnection('AIOT');
 
     let query = `
-      SELECT [SN],[PSERNO],[BACHNO],[PRSN],[dt_F],[slpC],[itcC],[r2C],[stdC],[healthyC],[status],[rangeMin],[rangeMax],[tagSTID],[tagChs]
+      SELECT 
+      	[SN],
+        [PSERNO],
+        [BACHNO],
+        [PRSN],
+        CONVERT(VARCHAR(19), [dt_F], 126) AS [dt_F],
+        [slpC],
+        [itcC],
+        [r2C],
+        [stdC],
+        [healthyC],
+        [status],
+        [rangeMin],
+        [rangeMax],
+        [tagSTID],
+        [tagChs]
       FROM [AIOT].[dbo].[logQaqcNRpt]
       WHERE [amdDate] >= @startDateTime
         AND [amdDate] < DATEADD(DAY, 1, CAST(@endDateTime AS DATE))

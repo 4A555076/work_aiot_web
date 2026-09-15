@@ -1,12 +1,14 @@
 import { useState } from "react";
 import dayjs from 'dayjs'
-import utc from "dayjs/plugin/utc";
-dayjs.extend(utc);
-import { getTestIdDateRangeList, getSensorComponentSerialsList, getSensorHealthData, getSensorHealthImage } from "@/api/sensor";
+import { 
+    getTestIdDateRangeList, 
+    getSensorComponentSerialsList, 
+    getSensorHealthData, 
+    getSensorHealthImage 
+} from "@/api/sensor";
 
 
 export function useTestIdDateRangeList() {
-
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -31,7 +33,12 @@ export function useTestIdDateRangeList() {
             setData(options);
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);
@@ -47,7 +54,6 @@ export function useTestIdDateRangeList() {
 }
 
 export function useSensorDateRangeList() {
-
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -68,7 +74,12 @@ export function useSensorDateRangeList() {
             setData(options);
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);
@@ -84,7 +95,6 @@ export function useSensorDateRangeList() {
 }
 
 export function useSensorHealthData() {
-
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -106,15 +116,18 @@ export function useSensorHealthData() {
 
             const formatted = (res || []).map((item) => ({
                 ...item,
-                dt_F: item.dt_F ? dayjs(item.dt_F).utc().format("YYYY-MM-DD HH:mm") : "",
+                dt_F: item.dt_F ? dayjs(item.dt_F).format("YYYY-MM-DD HH:mm") : "",
             }));
 
             setData(formatted);
-
-
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);
@@ -131,7 +144,6 @@ export function useSensorHealthData() {
 
 
 export function useSensorHealthImage() {
-
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -164,10 +176,14 @@ export function useSensorHealthImage() {
             }
 
             setData(res);
-
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);

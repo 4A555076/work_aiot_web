@@ -13,7 +13,12 @@ import ExportCSVButton from "@/components/common/export/ExportCSVButton";
 import ExportExcelButton from "@/components/common/export/ExportExcelButton";
 import ExportPDFButton from "@/components/common/export/ExportPDFButton";
 import { ChartLine  } from 'lucide-react';
-import { useTestIdDateRangeList, useSensorDateRangeList, useSensorHealthData, useSensorHealthImage } from "@/hook/useQaqcReport";
+import { 
+  useTestIdDateRangeList, 
+  useSensorDateRangeList, 
+  useSensorHealthData, 
+  useSensorHealthImage 
+} from "@/hook/useQaqcReport";
 
 
 export default function QaqcReportPage() {
@@ -21,7 +26,7 @@ export default function QaqcReportPage() {
 
   const initialForm = {
     startTime: dayjs().subtract(3, "month").startOf("month").format("YYYY-MM-DD"),
-    endTime: dayjs().endOf("day").format("YYYY-MM-DD"),
+    endTime: dayjs().format("YYYY-MM-DD"),
     SN: "",
     PRSN: "",
     enableDiff: ["isValue"],
@@ -171,6 +176,7 @@ export default function QaqcReportPage() {
             type="date"
             value={form.startTime}
             onChange={(e) => setForm({ ...form, startTime: e.target.value })}
+            max={form.endTime}
           />
 
           <BaseInput
@@ -178,6 +184,8 @@ export default function QaqcReportPage() {
             type="date"
             value={form.endTime}
             onChange={(e) => setForm({ ...form, endTime: e.target.value })}
+            min={form.startTime}
+            max={dayjs().format("YYYY-MM-DD")}
           />
 
           <BaseSelect
