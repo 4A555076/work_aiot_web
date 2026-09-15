@@ -100,34 +100,12 @@ const base64ToUint8Array = (base64String) => {
   return bytes;
 };
 
-const getBase64ImageSize = (base64String) => {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-
-    image.onload = () => resolve({
-      width: image.naturalWidth,
-      height: image.naturalHeight,
-    });
-    image.onerror = () => reject(new Error("無法取得圖片尺寸"));
-    image.src = base64String;
-  });
-};
-
-const fitImageSize = (width, height, maxWidth, maxHeight) => {
-  const scale = Math.min(maxWidth / width, maxHeight / height, 1);
-
-  return {
-    width: Math.round(width * scale),
-    height: Math.round(height * scale),
-  };
-};
-
 // Excel 有圖片(目前只有巡檢報表使用)
 export const exportToExcelWithImage = async ( data, columns, filename = "export" ) => {
 
   const imageCellWidth = 40;
   const imageCellHeight = 360;
-  const imageMaxWidth = 260;
+  const imageMaxWidth = 240;
   const imageMaxHeight = 320;
 
   const workbook = new ExcelJS.Workbook();
@@ -181,7 +159,6 @@ export const exportToExcelWithImage = async ( data, columns, filename = "export"
     const item = data[i];
 
     const rowData = filteredColumns.map((col) => {
-
       const key = col.accessorKey;
 
       if (imageColumns.includes(key)) {
@@ -203,7 +180,6 @@ export const exportToExcelWithImage = async ( data, columns, filename = "export"
 
     // 加入圖片
     for ( let colIndex = 0; colIndex < filteredColumns.length; colIndex++ ) {
-
       const key = filteredColumns[colIndex].accessorKey;
 
       if (!imageColumns.includes(key)) {
@@ -218,13 +194,10 @@ export const exportToExcelWithImage = async ( data, columns, filename = "export"
 
       try {
         const extension = imageBase64.match(/^data:image\/(\w+);base64,/)?.[1] || "jpeg";
-        const originalSize = await getBase64ImageSize(imageBase64);
-        const displaySize = fitImageSize(
-          originalSize.width,
-          originalSize.height,
-          imageMaxWidth,
-          imageMaxHeight
-        );
+        const displaySize = {
+          width: imageMaxWidth,
+          height: imageMaxHeight,
+        };
 
         const imageId =
           workbook.addImage({

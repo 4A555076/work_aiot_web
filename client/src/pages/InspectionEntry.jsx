@@ -277,11 +277,106 @@ function PhotoInput({ id, label, file, onChange, onRemove, error }) {
         id={id}
         className="hidden"
         type="file"
-        accept="image/*,.heic"
-        onChange={(event) => onChange(event.target.files?.[0] || null)}
+        accept="image/*"
+        onChange={async (event) => {
+          const file = event.target.files?.[0];
+
+          if (!file) {
+            onChange(null);
+            return;
+          }
+
+          try {
+            const croppedFile = await cropImageTo3x4(file);
+            onChange(croppedFile);
+          } catch (error) {
+            console.error("Crop image failed:", error);
+            alert("圖片處理失敗，請重新選擇圖片");
+          }
+          event.target.value = "";
+        }}
       />
     </div>
   );
+}
+
+function cropImageTo3x4(file) {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      resolve(null);
+      return;
+    }
+
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    image.onload = () => {
+      // 目標比例 3:4
+      const targetRatio = 3 / 4;
+      const sourceRatio = image.width / image.height;
+
+      let sourceX = 0;
+      let sourceY = 0;
+      let sourceWidth = image.width;
+      let sourceHeight = image.height;
+
+      if (sourceRatio > targetRatio) {
+        // 圖片太寬：裁左右
+        sourceWidth = image.height * targetRatio;
+        sourceX = (image.width - sourceWidth) / 2;
+      } else if (sourceRatio < targetRatio) {
+        // 圖片太高：裁上下
+        sourceHeight = image.width / targetRatio;
+        sourceY = (image.height - sourceHeight) / 2;
+      }
+
+      const canvas = document.createElement("canvas");
+
+      canvas.width = Math.round(sourceWidth);
+      canvas.height = Math.round(sourceHeight);
+
+      const context = canvas.getContext("2d");
+
+      context.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        0,
+        0,
+        canvas.width,
+        canvas.height,
+      );
+
+      canvas.toBlob(
+        (blob) => {
+          URL.revokeObjectURL(objectUrl);
+
+          if (!blob) {
+            reject(new Error("圖片裁切失敗"));
+            return;
+          }
+
+          resolve(
+            new File([blob], file.name, {
+              type: file.type,
+              lastModified: file.lastModified,
+            }),
+          );
+        },
+        file.type,
+        1,
+      );
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("圖片讀取失敗"));
+    };
+
+    image.src = objectUrl;
+  });
 }
 
 export default function InspectionEntryPage() {
