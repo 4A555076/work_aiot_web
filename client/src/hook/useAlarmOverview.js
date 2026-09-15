@@ -1,11 +1,13 @@
 import { useState } from "react";
 import dayjs from 'dayjs'
-import utc from "dayjs/plugin/utc";
-dayjs.extend(utc);
-import { getProjectsList, getThresholdOverData, getDisconnectedData } from "@/api/station";
+import { 
+    getProjectsList, 
+    getThresholdOverData, 
+    getDisconnectedData 
+} from "@/api/station";
+
 
 export function useProjectsList() {
-
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -25,7 +27,12 @@ export function useProjectsList() {
             setData(options);
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);
@@ -54,13 +61,18 @@ export function useThresholdOverData() {
             const res = await getThresholdOverData({ PJID: form.project });
             const formatted = (res || []).map((item) => ({
                 ...item,
-                CHECKTIME: item.CHECKTIME ? dayjs(item.CHECKTIME).utc().format("YYYY-MM-DD HH:mm") : "",
+                CHECKTIME: item.CHECKTIME ? dayjs(item.CHECKTIME).format("YYYY-MM-DD HH:mm") : "",
             }));
 
             setData(formatted);
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);
@@ -82,7 +94,6 @@ export function useDisconnectedData() {
     const [error, setError] = useState(null);
 
     const fetchDisconnectedData = async (form) => {
-
         setLoading(true);
         setError(null);
 
@@ -96,13 +107,18 @@ export function useDisconnectedData() {
             const res = await getDisconnectedData(payload);
             const formatted = (res || []).map((item) => ({
                 ...item,
-                CHECKTIME: item.CHECKTIME ? dayjs(item.CHECKTIME).utc().format("YYYY-MM-DD HH:mm") : "",
+                CHECKTIME: item.CHECKTIME ? dayjs(item.CHECKTIME).format("YYYY-MM-DD HH:mm") : "",
             }));
 
             setData(formatted);
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);
