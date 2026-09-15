@@ -1,11 +1,11 @@
 import { useState } from "react";
-import dayjs from 'dayjs'
-import utc from "dayjs/plugin/utc";
-dayjs.extend(utc);
-import { getProjectsList, getMissingHourData } from "@/api/station";
+import { 
+    getProjectsList, 
+    getMissingHourData 
+} from "@/api/station";
+
 
 export function useProjectsList() {
-
     const [data, setData] = useState([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -25,7 +25,12 @@ export function useProjectsList() {
             setData(options);
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);
@@ -55,7 +60,12 @@ export function useMissingHourData() {
             setData(res || []);
         } catch (err) {
             console.error("error:", err);
-            const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+
+            const errMsg =
+                err?.response?.data?.message ||
+                err?.message ||
+                "載入失敗";
+
             setError(errMsg);
         } finally {
             setLoading(false);

@@ -246,7 +246,12 @@ router.post('/projects/missing-hour', verifyToken, async (req, res) => {
                 WHERE Date_Time = @prevDate
             )
             SELECT 
-                A.Date_Time, C.ProjID, A.STID, B.criteriaTDR, C.IIT, C.[Desc],
+                CONVERT(VARCHAR(19), A.Date_Time, 126) AS Date_Time, 
+                C.ProjID, 
+                A.STID, 
+                B.criteriaTDR, 
+                C.IIT, 
+                C.[Desc],
                 P.Prev_dCnt23,
                 A.dCnt00, A.dCnt01, A.dCnt02, A.dCnt03, A.dCnt04,
                 A.dCnt05, A.dCnt06, A.dCnt07, A.dCnt08, A.dCnt09,
@@ -268,8 +273,8 @@ router.post('/projects/missing-hour', verifyToken, async (req, res) => {
 
     const result3 = await aiotDb
       .request()
-      .input('prevDate', sql.NVarChar, prevDate)
-      .input('onlyDate', sql.NVarChar, onlyDate)
+      .input('prevDate', sql.VarChar, prevDate)
+      .input('onlyDate', sql.VarChar, onlyDate)
       .query(query3);
 
     const filtered = result3.recordset.filter((missingHour) =>

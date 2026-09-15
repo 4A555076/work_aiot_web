@@ -141,19 +141,36 @@ export default function MissingHourPage() {
       </div>
 
       {hasSearched && (
-        <BaseCard title="小時資料狀態" subtitle={`共 ${missingHourData.length} 筆測站資料`}>
+        <BaseCard 
+          title="小時資料狀態" 
+          subtitle={`共 ${missingHourData.length} 筆測站資料`}
+        >
           <BaseApiLoaderWrapper
             isLoading={loadingMissingHourData}
             isError={errorMissingHourData}
           >
-
             <div className="mb-4 flex flex-wrap justify-end gap-2">
-              <ExportCSVButton data={missingHourData} columns={columns} filename="小時資料狀態"/>
-              <ExportExcelButton data={missingHourData} columns={columns} filename="小時資料狀態"/>
-              <ExportPDFButton data={missingHourData} columns={columns} filename="小時資料狀態"/>
+              <ExportCSVButton 
+                data={missingHourData} 
+                columns={columns} 
+                filename="小時資料狀態"
+              />
+              <ExportExcelButton 
+                data={missingHourData} 
+                columns={columns} 
+                filename="小時資料狀態"
+              />
+              <ExportPDFButton 
+                data={missingHourData} 
+                columns={columns} 
+                filename="小時資料狀態"
+              />
             </div>
-
-            <BaseTable data={missingHourData} columns={columns} />
+            
+            <BaseTable 
+              data={missingHourData} 
+              columns={columns} 
+            />
           </BaseApiLoaderWrapper>
         </BaseCard>
       )}
