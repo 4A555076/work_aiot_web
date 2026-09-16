@@ -151,7 +151,6 @@ export function useStationModelData() {
         const res = await getStationModelData(STID, params);
         options = createStationModelOptions(res);
       }
-      console.log(options);
 
       const cacheKey = `${params.PJID}::${STID}`;
       setData((current) => ({

@@ -93,6 +93,11 @@
   --color-chart-3: var(--chart-3);
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-chart-9: var(--chart-9);
+  --color-chart-10: var(--chart-10);
 
   /* ==============================
      Sidebar
@@ -273,6 +278,11 @@
   --chart-3: #7f9fe8;
   --chart-4: #e6b85c;
   --chart-5: #e88787;
+  --chart-6: #9b72cf;
+  --chart-7: #2fb8ac;
+  --chart-8: #ed8b4a;
+  --chart-9: #d96c9b;
+  --chart-10: #78909c;
   --radius: 0.75rem;
   --radius-card-sm: 8px;
   --radius-card-md: 12px;
@@ -327,6 +337,11 @@
   --chart-3: #8f9bd2;
   --chart-4: #d7a45a;
   --chart-5: #e17a7a;
+  --chart-6: #b794e8;
+  --chart-7: #45c9bd;
+  --chart-8: #f0a15f;
+  --chart-9: #e58ab3;
+  --chart-10: #9aadb7;
   --sidebar: #17212a;
   --sidebar-foreground: #aebdc7;
   --sidebar-primary: #0ea5e9;

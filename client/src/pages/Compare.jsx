@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import dayjs from "dayjs";
 import { Chart } from "@highcharts/react";
 import { Exporting } from "@highcharts/react/modules/Exporting";
-import { Copy, Plus, Trash2, Check } from "lucide-react";
+import { Copy, Plus, Trash2, Check, Search, Columns2, Rows2 } from "lucide-react";
 import {
   useProjectsList,
   useCompareChartData,
@@ -16,13 +16,16 @@ import {
 } from "@/utils/stationSelectionStorage";
 import PageTitle from "@/components/common/PageTitle";
 import BaseButton from "@/components/common/button/BaseButton";
-import BaseCard from "@/components/common/card/BaseCard";
 import BaseDialog from "@/components/common/dialog/BaseDialog";
 import BaseInput from "@/components/common/input/BaseInput";
 import BaseSelect from "@/components/common/select/BaseSelect";
 import BaseCheckbox from "@/components/common/checkbox/BaseCheckbox";
 
-const COLORS = ['#2caffe', '#544fc5', '#00e272', '#fe6a35', '#6b8abc', '#d568fb', '#2ee0ca', '#fa4b42', '#feb56a', '#91e8e1'];
+const CHART_COLOR_TOKENS = Array.from(
+  { length: 10 },
+  (_, index) => `--chart-${index + 1}`,
+);
+const DEFAULT_CHART_COLOR = "#0ea5e9";
 const TIME_TYPES = ["T01", "T05", "T60"].map((value) => ({ value, label: value }));
 const LINE_TYPES = [
   { value: "spline", label: "曲線" },
@@ -50,6 +53,14 @@ const DATE_TIME_KEYS = [
 ];
 
 let rowSequence = 0;
+const getChartColor = (index = 0) => {
+  if (typeof document === "undefined") return DEFAULT_CHART_COLOR;
+
+  const token = CHART_COLOR_TOKENS[index % CHART_COLOR_TOKENS.length];
+  return getComputedStyle(document.documentElement).getPropertyValue(token).trim()
+    || DEFAULT_CHART_COLOR;
+};
+
 const createRow = (index = 0) => ({
   rowId: `comparison-${Date.now()}-${++rowSequence}`,
   PJID: "",
@@ -60,11 +71,25 @@ const createRow = (index = 0) => ({
   column: "",
   itemName: "",
   lineType: "spline",
-  color: COLORS[index % COLORS.length],
+  color: getChartColor(index),
   stations: [],
   items: [],
   loading: false,
+  copiedFrom: "",
 });
+
+const getSeriesKey = (index) => {
+  let value = index + 1;
+  let label = "";
+
+  while (value > 0) {
+    value -= 1;
+    label = String.fromCharCode(65 + (value % 26)) + label;
+    value = Math.floor(value / 26);
+  }
+
+  return label;
+};
 
 const getStationLabel = (station) =>
   station?.label || station?.STName_TW || station?.Desc || station?.IIT || station?.STID || "—";
@@ -103,6 +128,21 @@ const toTimestamp = (value) => {
   const numericValue = Number(value);
   if (Number.isFinite(numericValue)) return numericValue < 1e12 ? numericValue * 1000 : numericValue;
   return dayjs(value).valueOf();
+};
+
+// datetime-local 沒有時區資訊；圖表採 UTC 顯示時，需保留使用者輸入的鐘面時間。
+const localDateTimeToUtcTimestamp = (value) => {
+  const dateTime = dayjs(value);
+  if (!dateTime.isValid()) return undefined;
+
+  return Date.UTC(
+    dateTime.year(),
+    dateTime.month(),
+    dateTime.date(),
+    dateTime.hour(),
+    dateTime.minute(),
+    dateTime.second(),
+  );
 };
 
 const normalizePoints = (response, column) => extractRows(response)
@@ -184,7 +224,13 @@ const getLegendName = (item, showStationCode) => {
   return `${stationLabel} - ${itemName}`;
 };
 
-const createChartOptions = (series, hourlyXAxis, showStationCode, chartLayout) => {
+const createChartOptions = (
+  series,
+  hourlyXAxis,
+  showStationCode,
+  chartLayout,
+  queryTimeRange,
+) => {
   const hasSeparateAxes = chartLayout !== "normal";
   const isSplitAxes = chartLayout === "split-axes";
   const splitAxisHeight = series.length ? 100 / series.length : 100;
@@ -225,7 +271,7 @@ const createChartOptions = (series, hourlyXAxis, showStationCode, chartLayout) =
   chart: {
     height: isSplitAxes ? Math.max(430, series.length * 180) : 430,
     spacing: [18, 14, 10, 10],
-    backgroundColor: "#ffffff",
+    backgroundColor: "transparent",
     zooming: { type: "x" },
     alignTicks: !isSplitAxes,
   },
@@ -235,6 +281,10 @@ const createChartOptions = (series, hourlyXAxis, showStationCode, chartLayout) =
   xAxis: {
     type: "datetime",
     crosshair: true,
+    min: queryTimeRange.min,
+    max: queryTimeRange.max,
+    startOnTick: false,
+    endOnTick: false,
     tickInterval: hourlyXAxis ? 60 * 60 * 1000 : undefined,
     title: { text: "日期時間" },
 
@@ -300,16 +350,21 @@ const createChartOptions = (series, hourlyXAxis, showStationCode, chartLayout) =
 
 export default function ComparePage() {
   const [rows, setRows] = useState([]);
-  const [form, setForm] = useState({
+  const [initialTimeRange] = useState(() => ({
     startTime: dayjs().startOf("day").format("YYYY-MM-DDTHH:mm"),
     endTime: dayjs().endOf("day").format("YYYY-MM-DDTHH:mm"),
-  });
+  }));
+  const [form, setForm] = useState(initialTimeRange);
+  const [queryForm, setQueryForm] = useState(initialTimeRange);
   const [series, setSeries] = useState([]);
+  const [chartRevision, setChartRevision] = useState(0);
   const [notice, setNotice] = useState("");
   const [copiedStationId, setCopiedStationId] = useState("");
   const [clearOpen, setClearOpen] = useState(false);
   const [chartSettings, setChartSettings] = useState([]);
   const [chartLayout, setChartLayout] = useState("normal");
+  const [workspaceLayout, setWorkspaceLayout] = useState("horizontal");
+  const [activeRowId, setActiveRowId] = useState("");
   const queriedRowsRef = useRef([]);
   const lastQueryKeyRef = useRef("");
 
@@ -339,12 +394,18 @@ export default function ComparePage() {
     fetchProjectsList();
 
     const selections = getComparisonStations();
-    setRows(selections.map((selection, index) => ({
-      ...createRow(index),
-      ...selection,
-      timeType: selection.PJID === "TAQMN" ? "T60" : selection.timeType || "T01",
-      loading: true,
-    })));
+    const initialRows = selections.length
+      ? selections.map((selection, index) => ({
+          ...createRow(index),
+          ...selection,
+          timeType: selection.PJID === "TAQMN" ? "T60" : selection.timeType || "T01",
+          loading: true,
+        }))
+      : [createRow(0)];
+
+    setRows(initialRows);
+    setActiveRowId(initialRows[0]?.rowId || "");
+
     selections.forEach((selection) => {
       fetchStationList({ project: selection.PJID });
       fetchStationModelData(selection.STID, { PJID: selection.PJID });
@@ -380,6 +441,13 @@ export default function ComparePage() {
       };
     }));
   }, [modelData]);
+
+  useEffect(() => {
+    if (!rows.length) return;
+    if (activeRowId && !rows.some((row) => row.rowId === activeRowId)) {
+      setActiveRowId(rows[0].rowId);
+    }
+  }, [rows, activeRowId]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -426,14 +494,24 @@ export default function ComparePage() {
     }).filter(Boolean);
 
     setSeries(nextSeries);
+    setChartRevision((current) => current + 1);
     if (chartData.some((result) => result.status === "rejected")) {
       setNotice("部分資料載入失敗，已保留成功資料");
     }
   }, [chartData]);
 
-  const updateRow = (id, patch) => setRows((current) => current.map(
-    (row) => row.rowId === id ? { ...row, ...patch } : row,
-  ));
+  const updateRow = (id, patch) => {
+    setActiveRowId(id);
+    setRows((current) => current.map(
+      (row) => row.rowId === id ? { ...row, ...patch } : row,
+    ));
+  };
+
+  const addRow = () => {
+    const nextRow = createRow(rows.length);
+    setRows((current) => [...current, nextRow]);
+    setActiveRowId(nextRow.rowId);
+  };
 
   const selectProject = (row, PJID) => {
     updateRow(row.rowId, {
@@ -467,19 +545,45 @@ export default function ComparePage() {
   };
 
   const deleteRow = (row) => {
+    const sourceIndex = rows.findIndex((item) => item.rowId === row.rowId);
     const remaining = rows.filter((item) => item.rowId !== row.rowId);
-    setRows(remaining);
+    const fallbackRow = remaining[Math.min(sourceIndex, remaining.length - 1)] || createRow(0);
+    const nextRows = remaining.length ? remaining : [fallbackRow];
+
+    setRows(nextRows);
     setSeries((current) => current.filter((item) => item.id !== row.rowId));
+
+    if (activeRowId === row.rowId) {
+      setActiveRowId(fallbackRow.rowId);
+    }
+
     if (row.PJID && row.STID && !remaining.some(
       (item) => item.PJID === row.PJID && item.STID === row.STID,
     )) removeComparisonStation(row.PJID, row.STID);
   };
 
   const duplicateRow = (row) => {
-    setRows((current) => [
-      ...current,
-      { ...row, rowId: createRow().rowId, color: COLORS[current.length % COLORS.length] },
-    ]);
+    const sourceIndex = rows.findIndex((item) => item.rowId === row.rowId);
+    const sourceKey = getSeriesKey(Math.max(sourceIndex, 0));
+    const nextRow = {
+      ...row,
+      rowId: createRow().rowId,
+      color: getChartColor(rows.length),
+      copiedFrom: sourceKey,
+    };
+
+    setRows((current) => {
+      const liveSourceIndex = current.findIndex((item) => item.rowId === row.rowId);
+      const next = [...current];
+      next.splice(liveSourceIndex + 1, 0, nextRow);
+      return next;
+    });
+    setActiveRowId(nextRow.rowId);
+
+    const sourceName = [row.stationName || row.STID, row.itemName || row.column]
+      .filter(Boolean)
+      .join(" · ");
+    setNotice(`已複製 ${sourceKey}${sourceName ? `｜${sourceName}` : ""}`);
   };
 
   const copyStationName = async (row) => {
@@ -494,10 +598,12 @@ export default function ComparePage() {
     }
   };
 
-  const validate = () => {
-    if (!form.startTime) return "請選擇開始時間";
-    if (!form.endTime) return "請選擇結束時間";
-    if (dayjs(form.startTime).isAfter(dayjs(form.endTime))) return "開始時間不可晚於結束時間";
+  const validate = (timeRange = form) => {
+    if (!timeRange.startTime) return "請選擇開始時間";
+    if (!timeRange.endTime) return "請選擇結束時間";
+    if (dayjs(timeRange.startTime).isAfter(dayjs(timeRange.endTime))) {
+      return "開始時間不可晚於結束時間";
+    }
     if (!rows.length) return "請至少新增一筆比對資料";
 
     for (let index = 0; index < rows.length; index += 1) {
@@ -508,9 +614,21 @@ export default function ComparePage() {
     return "";
   };
 
+  const search = () => {
+    const error = validate(form);
+    if (error) {
+      setNotice(error);
+      return;
+    }
+
+    setQueryForm({ ...form });
+  };
+
   const clearAll = () => {
+    const nextRow = createRow(0);
     clearComparisonStations();
-    setRows([]);
+    setRows([nextRow]);
+    setActiveRowId(nextRow.rowId);
     setSeries([]);
     setClearOpen(false);
     setNotice("已清除所有比對資料");
@@ -518,13 +636,13 @@ export default function ComparePage() {
 
   useEffect(() => {
     if (querying) return;
-    if (validate() || rows.some((row) => row.loading)) {
+    if (validate(queryForm) || rows.some((row) => row.loading)) {
       lastQueryKeyRef.current = "";
       setSeries([]);
       return;
     }
 
-    const queryKey = JSON.stringify({ rows, form });
+    const queryKey = JSON.stringify({ rows, form: queryForm });
     if (lastQueryKeyRef.current === queryKey) return;
 
     const timer = setTimeout(() => {
@@ -535,13 +653,13 @@ export default function ComparePage() {
         STID: row.STID,
         column: resolveColumn(row),
         type: row.PJID === "TAQMN" ? "T60" : row.timeType,
-        startDateTime: dayjs(form.startTime).format("YYYY-MM-DD HH:mm:ss"),
-        endDateTime: dayjs(form.endTime).format("YYYY-MM-DD HH:mm:ss"),
+        startDateTime: dayjs(queryForm.startTime).format("YYYY-MM-DD HH:mm:ss"),
+        endDateTime: dayjs(queryForm.endTime).format("YYYY-MM-DD HH:mm:ss"),
       })));
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [rows, form, querying]);
+  }, [rows, queryForm, querying]);
 
   const availableSeries = series.filter((item) => item.data.length);
   const hourlyXAxis = chartSettings.includes("hourly-x-axis");
@@ -551,7 +669,28 @@ export default function ComparePage() {
     hourlyXAxis,
     showStationCode,
     chartLayout,
+    {
+      min: localDateTimeToUtcTimestamp(queryForm.startTime),
+      max: localDateTimeToUtcTimestamp(queryForm.endTime),
+    },
   );
+  const chartKey = JSON.stringify({
+    chartRevision,
+    chartLayout,
+    startTime: queryForm.startTime,
+    endTime: queryForm.endTime,
+    series: availableSeries.map((item) => ({
+      id: item.id,
+      type: item.lineType,
+      length: item.data.length,
+      first: item.data[0]?.[0],
+      last: item.data.at(-1)?.[0],
+    })),
+  });
+  const hasPendingTimeChanges = form.startTime !== queryForm.startTime
+    || form.endTime !== queryForm.endTime;
+  const configuredRowCount = rows.filter((row) => row.PJID && row.STID && row.column).length;
+  const analysisReady = configuredRowCount === rows.length && rows.length > 0;
 
   return (
     <div className="space-y-8 highcharts-light">
@@ -560,604 +699,458 @@ export default function ComparePage() {
       {notice && (
         <div
           role="status"
-          className="
-            fixed inset-x-4 top-20 z-50
-            rounded-lg bg-primary px-4 py-3
-            type-body text-primary-foreground shadow-sm
-            sm:inset-x-auto sm:right-5 sm:max-w-sm
-          "
+          className="fixed inset-x-4 top-20 z-50 rounded-lg bg-primary px-4 py-3 type-body text-primary-foreground shadow-sm sm:inset-x-auto sm:right-5 sm:max-w-sm"
         >
           {notice}
         </div>
       )}
 
-      <BaseCard
-        title={
-          <span className="flex items-center gap-2">
-            <b className="grid size-7 shrink-0 place-items-center rounded-full bg-primary type-meta text-primary-foreground">
-              1
-            </b>
+      <div className="bg-surface-secondary/60">
+        <section className="border-y border-border bg-surface px-4 py-5 sm:px-5" aria-labelledby="compare-filter-title">
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-[minmax(12rem,.7fr)_minmax(13rem,1fr)_minmax(13rem,1fr)_auto] xl:items-end">
+          <div className="min-w-0 xl:self-center">
+            <div className="flex items-center gap-2">
+              <span className="type-meta font-bold text-primary">01</span>
+              <h2 id="compare-filter-title" className="type-section-title font-semibold text-foreground">
+                分析條件
+              </h2>
+            </div>
+            <p className="mt-1 type-meta text-muted-foreground">
+              選擇資料比較的時間範圍
+            </p>
+          </div>
 
-            <span>設定時間與比對項目</span>
-          </span>
-        }
-        subtitle="設定查詢期間，並選擇要比較的測站與測項"
-        headerRight={
-          <div className="flex shrink-0 gap-1.5 sm:gap-2">
-            <BaseButton
-              type="button"
-              size="sm"
-              onClick={() =>
-                setRows((current) => [
+          <BaseInput
+              id="compare-start-time"
+              label="開始時間"
+              type="datetime-local"
+              value={form.startTime}
+              max={form.endTime}
+              onChange={(event) =>
+                setForm((current) => ({
                   ...current,
-                  createRow(current.length),
-                ])
+                  startTime: event.target.value,
+                }))
               }
-            >
-              <Plus />
-              <span className="hidden sm:inline">新增</span>
-            </BaseButton>
-
-            <BaseButton
-              type="button"
-              variant="destructive"
-              size="sm"
-              onClick={() => setClearOpen(true)}
-              disabled={!rows.length}
-            >
-              <Trash2 />
-              <span className="hidden sm:inline">清除</span>
-            </BaseButton>
-          </div>
-        }
-        contentClassName="p-0"
-      >
-        <div className="mb-4 border-b border-border px-3 py-3 sm:mb-5 sm:px-4">
-          <div className="grid gap-2 sm:grid-cols-2 lg:flex lg:items-center">
-            <span className="type-meta font-semibold text-muted-foreground sm:col-span-2 lg:mr-1">
-              時間範圍
-            </span>
-
-            <div className="min-w-0 lg:w-56">
-              <BaseInput
-                label=""
-                type="datetime-local"
-                value={form.startTime}
-                max={form.endTime}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    startTime: event.target.value,
-                  }))
-                }
-              />
-            </div>
-
-            <span className="hidden shrink-0 type-meta text-muted-foreground lg:block">
-              —
-            </span>
-
-            <div className="min-w-0 lg:w-56">
-              <BaseInput
-                label=""
-                type="datetime-local"
-                value={form.endTime}
-                min={form.startTime}
-                max={dayjs().endOf("day").format("YYYY-MM-DD HH:mm")}
-                onChange={(event) =>
-                  setForm((current) => ({
-                    ...current,
-                    endTime: event.target.value,
-                  }))
-                }
-              />
-            </div>
-          </div>
-        </div>
-
-        {rows.length ? (
-          <>
-            <div className="divide-y divide-border lg:hidden">
-              {rows.map((row, index) => (
-                <div
-                  key={row.rowId}
-                  className="space-y-3 px-3 py-4 transition-colors hover:bg-secondary/30 sm:px-4"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="type-meta font-semibold text-foreground bg-primary-light p-1 rounded-r-md">
-                      比對項目 {index + 1}
-                    </span>
-
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="color"
-                        aria-label={`項目 ${index + 1} 顏色`}
-                        value={row.color}
-                        onChange={(event) => updateRow(row.rowId, { color: event.target.value })}
-                        className="size-7 shrink-0 cursor-pointer rounded-md border border-border bg-card p-0.5"
-                      />
-
-                      <BaseButton
-                        type="button"
-                        variant="ghost"
-                        size="table-icon"
-                        className="text-muted-foreground"
-                        title="複製"
-                        onClick={() => duplicateRow(row)}
-                      >
-                        <Copy />
-                      </BaseButton>
-
-                      <BaseButton
-                        type="button"
-                        variant="ghost"
-                        size="table-icon"
-                        className="text-muted-foreground hover:text-destructive"
-                        title="刪除"
-                        onClick={() => deleteRow(row)}
-                      >
-                        <Trash2 />
-                      </BaseButton>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div className="min-w-0 space-y-1">
-                      <span className="type-meta font-medium text-muted-foreground">
-                        專案
-                      </span>
-
-                      <BaseSelect
-                        value={row.PJID}
-                        displayValue={getDisplayName(projects, row.PJID)}
-                        onChange={(PJID) => selectProject(row, PJID)}
-                        options={projects}
-                        placeholder="選擇專案"
-                      />
-
-                      {row.PJID && (
-                        <p className="truncate px-1 type-meta text-muted-foreground">
-                          {row.PJID}
-                        </p>
-                      )}
-                    </div>
-
-                    <div className="min-w-0 space-y-1">
-                      <span className="type-meta font-medium text-muted-foreground">
-                        測站
-                      </span>
-
-                      <BaseSelect
-                        value={row.STID}
-                        displayValue={getDisplayName(row.stations, row.STID)}
-                        onChange={(STID) => selectStation(row, STID)}
-                        options={row.stations}
-                        placeholder={row.loading ? "載入中…" : "選擇測站"}
-                        disabled={!row.PJID || row.loading}
-                      />
-
-                      {(row.STID || row.Desc || row.stationName) && (
-                        <div className="flex min-w-0 items-center gap-1 px-1">
-                          <p
-                            className="min-w-0 flex-1 truncate type-meta text-muted-foreground"
-                            title={[row.STID, row.Desc].filter(Boolean).join(" · ")}
-                          >
-                            {[row.STID, row.Desc].filter(Boolean).join(" · ")}
-                          </p>
-
-                          {row.stationName && (
-                            <BaseButton
-                              type="button"
-                              variant="ghost"
-                              size="icon-xs"
-                              className="shrink-0"
-                              title="複製 STID 與 IIT"
-                              onClick={() => copyStationName(row)}
-                            >
-                              {copiedStationId === row.rowId ? (<Check />) : (<Copy />)}
-                            </BaseButton>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="min-w-0 space-y-1">
-                    <span className="type-meta font-medium text-muted-foreground">
-                      測項
-                    </span>
-
-                    <BaseSelect
-                      value={row.column}
-                      onChange={(column) =>
-                        updateRow(row.rowId, {
-                          column,
-                          itemName:
-                            row.items.find(
-                              (item) =>
-                                item.value === column,
-                            )?.label || column,
-                        })
-                      }
-                      options={row.items}
-                      placeholder={row.loading ? "載入中…" : "選擇測項"}
-                      disabled={!row.STID || row.loading}
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="min-w-0 space-y-1">
-                      <span className="type-meta font-medium text-muted-foreground">
-                        時間頻率
-                      </span>
-
-                      <BaseSelect
-                        value={row.timeType}
-                        onChange={(timeType) => updateRow(row.rowId, { timeType })}
-                        options={
-                          row.PJID === "TAQMN"
-                            ? TIME_TYPES.filter(
-                                (item) =>
-                                  item.value === "T60",
-                              )
-                            : TIME_TYPES
-                        }
-                        disabled={row.PJID === "TAQMN"}
-                      />
-                    </div>
-
-                    <div className="min-w-0 space-y-1">
-                      <span className="type-meta font-medium text-muted-foreground">
-                        線條
-                      </span>
-
-                      <BaseSelect
-                        value={row.lineType}
-                        onChange={(lineType) => updateRow(row.rowId, { lineType })}
-                        options={LINE_TYPES}
-                      />
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="hidden overflow-x-auto lg:block">
-              <table className="w-full table-fixed border-collapse text-left">
-                <colgroup>
-                  <col className="w-[23%]" />
-                  <col className="w-[23%]" />
-                  <col className="w-[15%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[12%]" />
-                  <col className="w-[6%]" />
-                  <col className="w-[9%]" />
-                </colgroup>
-
-                <thead className="border-b border-border bg-secondary">
-                  <tr className="text-muted-foreground">
-                    <th className="px-1 py-2 text-center type-meta font-semibold">
-                      專案
-                    </th>
-
-                    <th className="px-1 py-2 text-center type-meta font-semibold">
-                      測站
-                    </th>
-
-                    <th className="px-1 py-2 text-center type-meta font-semibold">
-                      測項
-                    </th>
-
-                    <th className="px-1 py-2 text-center type-meta font-semibold">
-                      時間頻率
-                    </th>
-
-                    <th className="px-1 py-2 text-center type-meta font-semibold">
-                      線條
-                    </th>
-
-                    <th className="px-1 py-2 text-center type-meta font-semibold">
-                      顏色
-                    </th>
-
-                    <th className="px-1 py-2 text-center type-meta font-semibold">
-                      操作
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody className="divide-y divide-border">
-                  {rows.map((row, index) => (
-                    <tr
-                      key={row.rowId}
-                      className="align-top transition-colors hover:bg-secondary/40"
-                    >
-                      <td className="px-1 py-2">
-                        <div className="min-w-0">
-                          <BaseSelect
-                            value={row.PJID}
-                            displayValue={getDisplayName(projects, row.PJID)}
-                            onChange={(PJID) => selectProject(row, PJID)}
-                            options={projects}
-                            placeholder="選擇專案"
-                          />
-
-                          {row.PJID && (
-                            <p className="mt-1 truncate px-1 type-meta text-muted-foreground">
-                              {row.PJID}
-                            </p>
-                          )}
-                        </div>
-                      </td>
-
-                      <td className="px-1 py-2">
-                        <div className="min-w-0">
-                          <BaseSelect
-                            value={row.STID}
-                            displayValue={getDisplayName(row.stations, row.STID)}
-                            onChange={(STID) => selectStation(row, STID)}
-                            options={row.stations}
-                            placeholder={row.loading ? "載入中…" : "選擇測站"}
-                            disabled={!row.PJID || row.loading}
-                          />
-
-                          {(row.STID || row.Desc || row.stationName) && (
-                            <div className="mt-1 flex min-w-0 items-center gap-1 px-1">
-                              <p
-                                className="min-w-0 flex-1 truncate type-meta text-muted-foreground"
-                                title={[ row.STID, row.Desc].filter(Boolean).join(" · ")}
-                              >
-                                {[ row.STID, row.Desc].filter(Boolean).join(" · ")}
-                              </p>
-
-                              {row.stationName && (
-                                <BaseButton
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon-xs"
-                                  className="shrink-0"
-                                  title="複製 STID 與 IIT"
-                                  onClick={() =>
-                                    copyStationName(row)
-                                  }
-                                >
-                                  {copiedStationId ===
-                                  row.rowId ? (
-                                    <Check />
-                                  ) : (
-                                    <Copy />
-                                  )}
-                                </BaseButton>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </td>
-
-                      <td className="px-1 py-2">
-                        <BaseSelect
-                          value={row.column}
-                          onChange={(column) =>
-                            updateRow(row.rowId, {
-                              column,
-                              itemName:
-                                row.items.find(
-                                  (item) =>
-                                    item.value ===
-                                    column,
-                                )?.label || column,
-                            })
-                          }
-                          options={row.items}
-                          placeholder={
-                            row.loading
-                              ? "載入中…"
-                              : "選擇測項"
-                          }
-                          disabled={
-                            !row.STID || row.loading
-                          }
-                        />
-                      </td>
-
-                      <td className="px-1 py-2">
-                        <BaseSelect
-                          value={row.timeType}
-                          onChange={(timeType) =>
-                            updateRow(row.rowId, {
-                              timeType,
-                            })
-                          }
-                          options={
-                            row.PJID === "TAQMN"
-                              ? TIME_TYPES.filter(
-                                  (item) =>
-                                    item.value ===
-                                    "T60",
-                                )
-                              : TIME_TYPES
-                          }
-                          disabled={
-                            row.PJID === "TAQMN"
-                          }
-                        />
-                      </td>
-
-                      <td className="px-1 py-2">
-                        <BaseSelect
-                          value={row.lineType}
-                          onChange={(lineType) =>
-                            updateRow(row.rowId, {
-                              lineType,
-                            })
-                          }
-                          options={LINE_TYPES}
-                        />
-                      </td>
-
-                      <td className="px-1 py-2">
-                        <div className="flex justify-center">
-                          <input
-                            type="color"
-                            aria-label={`項目 ${index + 1} 顏色`}
-                            value={row.color}
-                            onChange={(event) =>
-                              updateRow(row.rowId, {
-                                color:
-                                  event.target.value,
-                              })
-                            }
-                            className="size-8 shrink-0 cursor-pointer rounded-md border border-border bg-card p-0.5"
-                          />
-                        </div>
-                      </td>
-
-                      <td className="px-1 py-2">
-                        <div className="flex justify-center gap-1">
-                          <BaseButton
-                            type="button"
-                            variant="ghost"
-                            size="table-icon"
-                            className="text-muted-foreground"
-                            title="複製"
-                            onClick={() =>
-                              duplicateRow(row)
-                            }
-                          >
-                            <Copy />
-                          </BaseButton>
-
-                          <BaseButton
-                            type="button"
-                            variant="ghost"
-                            size="table-icon"
-                            className="text-muted-foreground hover:text-destructive"
-                            title="刪除"
-                            onClick={() =>
-                              deleteRow(row)
-                            }
-                          >
-                            <Trash2 />
-                          </BaseButton>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : (
-          <button
-            type="button"
-            onClick={() =>
-              setRows([createRow(0)])
-            }
-            className="grid min-h-28 w-full place-items-center p-5 text-center text-muted-foreground transition-colors hover:bg-secondary/40 sm:p-6"
-          >
-            <span>
-              <Plus
-                className="mx-auto mb-2 text-primary"
-                size={22}
-              />
-
-              <strong className="block type-body text-foreground">
-                新增第一個比對項目
-              </strong>
-
-              <small>
-                可比較不同測站或不同測項
-              </small>
-            </span>
-          </button>
-        )}
-
-        <div className="border-t border-border px-3 py-2">
-          <p className="type-meta text-muted-foreground">
-            {rows.length
-              ? querying
-                ? "資料載入中…"
-                : `共 ${rows.length} 個項目，設定完成後自動更新圖表`
-              : "請先新增比對項目"}
-          </p>
-        </div>
-      </BaseCard>
-
-      <BaseCard
-        title={
-          <span className="flex items-center gap-2">
-            <b className="grid size-7 shrink-0 place-items-center rounded-full bg-primary type-meta text-primary-foreground">
-              2
-            </b>
-
-            <span>查看比對結果</span>
-          </span>
-        }
-        subtitle="拖曳圖表可放大時間區段，右上角可匯出圖表與資料"
-      >
-        <div className="mb-4">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <BaseCheckbox
-              className="flex flex-col gap-2"
-              value={chartSettings}
-              onChange={setChartSettings}
-              items={[
-                { value: "hourly-x-axis", label: "X 軸小時刻度" },
-                {
-                  value: "station-code-legend",
-                  label: "編號（STID）更改成裝置名稱（IIT）",
-                },
-              ]}
             />
 
-            <div className="w-full sm:w-56 sm:shrink-0">
-              <BaseSelect
-                label=""
-                value={chartLayout}
-                onChange={setChartLayout}
-                options={CHART_LAYOUT_OPTIONS}
-              />
-            </div>
+            <BaseInput
+              id="compare-end-time"
+              label="結束時間"
+              type="datetime-local"
+              value={form.endTime}
+              min={form.startTime}
+              max={dayjs().endOf("day").format("YYYY-MM-DDTHH:mm")}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  endTime: event.target.value,
+                }))
+              }
+            />
+
+            <BaseButton
+              type="button"
+              onClick={search}
+              disabled={querying}
+              className="w-full whitespace-nowrap px-6 sm:w-auto"
+            >
+              <Search className="size-4" />
+              {querying ? "分析中…" : "分析資料"}
+            </BaseButton>
+        </div>
+
+        {hasPendingTimeChanges && (
+          <p className="mt-3 text-right type-meta font-medium text-warning">
+            時間範圍已修改，點選「分析資料」後套用。
+          </p>
+        )}
+      </section>
+
+      <section aria-labelledby="compare-workspace-title">
+        <header className="flex flex-col gap-4 bg-surface px-4 py-4 sm:flex-row sm:items-end sm:justify-between sm:px-5">
+          <div>
+            <h2 id="compare-workspace-title" className="type-card-title font-semibold text-foreground">
+              資料比較工作區
+            </h2>
+            <p className="mt-1 type-meta text-muted-foreground">
+              已設定 {configuredRowCount} / {rows.length} 組比較資料
+            </p>
           </div>
-        </div>
 
-        <div className="min-w-0 overflow-hidden">
-          {!series.length ? (
-            <div className="grid h-52 place-items-center rounded-lg border border-dashed border-border bg-secondary/30 px-4 text-center text-muted-foreground sm:h-64 lg:h-72">
-              <span>
-                <strong className="block type-body text-foreground">
-                  圖表會在設定完成後自動更新
-                </strong>
+          <div
+            className="flex w-fit items-center rounded-lg border border-border bg-surface-secondary p-0.5"
+            aria-label="工作區排列方式"
+          >
+            <button
+              type="button"
+              onClick={() => setWorkspaceLayout("horizontal")}
+              aria-label="左右排列"
+              title="左右排列"
+              aria-pressed={workspaceLayout === "horizontal"}
+              className={`grid size-8 place-items-center rounded-md transition-colors ${
+                workspaceLayout === "horizontal"
+                  ? "bg-surface text-primary shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Columns2 className="size-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => setWorkspaceLayout("vertical")}
+              aria-label="上下排列"
+              title="上下排列"
+              aria-pressed={workspaceLayout === "vertical"}
+              className={`grid size-8 place-items-center rounded-md transition-colors ${
+                workspaceLayout === "vertical"
+                  ? "bg-surface text-primary shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              <Rows2 className="size-4" />
+            </button>
+          </div>
+        </header>
 
-                <small>
-                  請新增測站並完成專案、測站與測項設定
-                </small>
-              </span>
+        <div
+          className={`grid border-y border-border ${
+            workspaceLayout === "horizontal"
+              ? "xl:grid-cols-[27rem_minmax(0,1fr)]"
+              : "grid-cols-1"
+          }`}
+        >
+          <aside
+            className={`flex min-h-0 min-w-0 flex-col bg-surface-secondary ${
+              workspaceLayout === "horizontal"
+                ? "border-b border-border xl:border-b-0 xl:border-r"
+                : "border-b border-border"
+            }`}
+          >
+            <header className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3.5">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="type-meta font-bold text-primary">02</span>
+                  <h2 className="type-section-title font-semibold text-foreground">比較資料</h2>
+                </div>
+                <p className="mt-0.5 type-meta text-muted-foreground">選擇專案、測站、測項與圖型</p>
+              </div>
+
+              <div className="flex shrink-0 items-center gap-2">
+
+                <BaseButton
+                  type="button"
+                  size="sm"
+                  title="新增比較資料"
+                  onClick={addRow}
+                >
+                  <Plus className="size-4" />
+                  新增
+                </BaseButton>
+
+                <BaseButton
+                  type="button"
+                  variant="ghost"
+                  size="table-icon"
+                  className="text-muted-foreground hover:text-destructive"
+                  title="清除"
+                  onClick={() => setClearOpen(true)}
+                >
+                  <Trash2 className="size-4" />
+                </BaseButton>
+              </div>
+            </header>
+
+            <div className="flex-1 space-y-3 p-3 sm:p-4">
+              {rows.map((row, index) => {
+                const rowReady = Boolean(row.PJID && row.STID && row.column);
+                const seriesKey = getSeriesKey(index);
+                const sourceSummary = rowReady
+                  ? [row.stationName || row.STID, row.itemName || row.column]
+                      .filter(Boolean)
+                      .join(" · ")
+                  : `比較資料 ${seriesKey}`;
+
+                const isActive = row.rowId === activeRowId;
+                const isExpanded = isActive;
+                const showActiveState = isActive;
+
+                return (
+                  <article
+                    key={row.rowId}
+                    className={`overflow-hidden rounded-xl border bg-surface transition-all ${
+                      showActiveState
+                        ? "border-primary/40 ring-1 ring-primary/10"
+                        : "border-border hover:border-primary/25"
+                    }`}
+                    style={showActiveState ? { borderLeftColor: row.color, borderLeftWidth: 4 } : undefined}
+                  >
+                    <div className={`flex items-center justify-between gap-3 px-3 py-3 ${
+                      showActiveState ? "border-b border-border/70 bg-primary-light" : "bg-surface"
+                    }`}>
+                      <button
+                        type="button"
+                        onClick={() => setActiveRowId((current) =>
+                          current === row.rowId ? "" : row.rowId
+                        )}
+                        aria-expanded={isExpanded}
+                        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                      >
+                        <div
+                          className="grid size-9 shrink-0 place-items-center rounded-lg type-body font-bold text-primary-foreground"
+                          style={{ backgroundColor: row.color }}
+                        >
+                          {seriesKey}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <strong className="min-w-0 flex-1 truncate type-body font-semibold text-foreground">
+                              {rowReady ? sourceSummary : `比較資料 ${seriesKey}`}
+                            </strong>
+                            {showActiveState && (
+                              <span className="shrink-0 rounded-full bg-primary-light px-2 py-0.5 type-meta font-semibold text-primary">
+                                編輯中
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="mt-0.5 flex items-center gap-2 type-meta text-muted-foreground">
+                            {!rowReady && <span className="font-medium text-warning">未完成</span>}
+                          </div>
+                        </div>
+                      </button>
+
+                      <div className="flex shrink-0 items-center gap-1">
+                        <label className="grid size-8 cursor-pointer place-items-center rounded-lg border border-border bg-surface" title={`${seriesKey} 圖表顏色`}>
+                          <span className="size-4 rounded-full" style={{ backgroundColor: row.color }} />
+                          <input
+                            type="color"
+                            aria-label={`序列 ${seriesKey} 顏色`}
+                            value={row.color}
+                            onChange={(event) =>
+                              updateRow(row.rowId, { color: event.target.value })
+                            }
+                            className="sr-only"
+                          />
+                        </label>
+
+                        <BaseButton
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          title={`複製 ${seriesKey}｜${sourceSummary}`}
+                          aria-label={`複製序列 ${seriesKey}`}
+                          onClick={() => duplicateRow(row)}
+                        >
+                          <Copy />
+                        </BaseButton>
+
+                        <BaseButton
+                          type="button"
+                          variant="ghost"
+                          size="icon-xs"
+                          className="text-muted-foreground hover:text-destructive"
+                          title={`刪除 ${seriesKey}｜${sourceSummary}`}
+                          aria-label={`刪除序列 ${seriesKey}`}
+                          onClick={() => deleteRow(row)}
+                        >
+                          <Trash2 />
+                        </BaseButton>
+                      </div>
+                    </div>
+
+                    {isExpanded && (
+                      <div className="p-3">
+                        <div
+                          className={`grid gap-2.5 sm:grid-cols-2 ${
+                            workspaceLayout === "horizontal"
+                              ? "xl:grid-cols-1"
+                              : "xl:grid-cols-[1.15fr_1.15fr_1fr_1fr] xl:items-start"
+                          }`}
+                        >
+                      <div className="min-w-0">
+                        <BaseSelect
+                          label="專案"
+                          value={row.PJID}
+                          displayValue={getDisplayName(projects, row.PJID)}
+                          onChange={(PJID) => selectProject(row, PJID)}
+                          options={projects}
+                          placeholder="選擇專案"
+                        />
+                      </div>
+
+                      <div className="min-w-0">
+                        <BaseSelect
+                          label="測站"
+                          value={row.STID}
+                          displayValue={getDisplayName(row.stations, row.STID)}
+                          onChange={(STID) => selectStation(row, STID)}
+                          options={row.stations}
+                          placeholder={row.loading ? "載入中…" : "選擇測站"}
+                          disabled={!row.PJID || row.loading}
+                        />
+                        {(row.STID || row.Desc) && (
+                          <div className="mt-1 flex min-w-0 items-center gap-1 px-1">
+                            <p
+                              className="min-w-0 flex-1 truncate type-meta text-muted-foreground"
+                              title={[row.STID, row.Desc].filter(Boolean).join(" · ")}
+                            >
+                              {[row.STID, row.Desc].filter(Boolean).join(" · ")}
+                            </p>
+
+                            {row.stationName && (
+                              <BaseButton
+                                type="button"
+                                variant="ghost"
+                                size="icon-xs"
+                                className="shrink-0"
+                                title="複製 STID 與 IIT"
+                                onClick={() => copyStationName(row)}
+                              >
+                                {copiedStationId === row.rowId ? <Check /> : <Copy />}
+                              </BaseButton>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      <BaseSelect
+                        label="測項"
+                        value={row.column}
+                        onChange={(column) =>
+                          updateRow(row.rowId, {
+                            column,
+                            itemName:
+                              row.items.find((item) => item.value === column)?.label || column,
+                          })
+                        }
+                        options={row.items}
+                        placeholder={row.loading ? "載入中…" : "選擇測項"}
+                        disabled={!row.STID || row.loading}
+                      />
+
+                      <div className="grid grid-cols-2 gap-2.5">
+                        <BaseSelect
+                          label="頻率"
+                          value={row.timeType}
+                          onChange={(timeType) => updateRow(row.rowId, { timeType })}
+                          options={
+                            row.PJID === "TAQMN"
+                              ? TIME_TYPES.filter((item) => item.value === "T60")
+                              : TIME_TYPES
+                          }
+                          disabled={row.PJID === "TAQMN"}
+                        />
+
+                        <BaseSelect
+                          label="圖型"
+                          value={row.lineType}
+                          onChange={(lineType) => updateRow(row.rowId, { lineType })}
+                          options={LINE_TYPES}
+                        />
+                      </div>
+                    </div>
+                      </div>
+                    )}
+                  </article>
+                );
+              })}
+
             </div>
-          ) : !availableSeries.length ? (
-            <div className="grid h-52 place-items-center rounded-lg border border-dashed border-border bg-secondary/30 px-4 text-center type-body text-muted-foreground sm:h-64 lg:h-72">
-              查無符合條件的監測資料
-            </div>
-          ) : (
-            <Chart key={chartLayout} options={chartOptions}>
-              <Exporting
-                sourceWidth={1200}
-                sourceHeight={800}
-                scale={2}
-              />
-            </Chart>
-          )}
+          </aside>
+
+          <main
+            className={`flex min-h-0 min-w-0 flex-col bg-surface ${
+              workspaceLayout === "vertical" ? "border-t-0" : ""
+            }`}
+          >
+            <header className="shrink-0 border-b border-border px-4 py-3.5 sm:px-5">
+              <div className="flex flex-col gap-3 2xl:flex-row 2xl:items-center 2xl:justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="type-meta font-bold text-primary">03</span>
+                  <h2 className="type-section-title font-semibold text-foreground">分析結果</h2>
+                </div>
+
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <BaseCheckbox
+                    className="flex flex-wrap gap-x-4 gap-y-2"
+                    value={chartSettings}
+                    onChange={setChartSettings}
+                    items={[
+                      { value: "hourly-x-axis", label: "小時刻度" },
+                      { value: "station-code-legend", label: "IIT 名稱" },
+                    ]}
+                  />
+
+                  <div className="w-full sm:w-40">
+                    <BaseSelect
+                      label=""
+                      value={chartLayout}
+                      onChange={setChartLayout}
+                      options={CHART_LAYOUT_OPTIONS}
+                    />
+                  </div>
+                </div>
+              </div>
+            </header>
+
+            <section className="flex-1 bg-surface-secondary p-3 sm:p-4 lg:p-5">
+              <div className="relative min-w-0 overflow-hidden rounded-xl border border-border bg-surface p-2 sm:p-3">
+                {querying && !series.length ? (
+                  <div className="h-107.5 animate-pulse rounded-lg bg-muted" />
+                ) : !analysisReady ? (
+                  <div className="grid h-107.5 place-items-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center">
+                    <div className="max-w-md">
+                      <strong className="block type-body font-semibold text-foreground">
+                        請完成比較資料
+                      </strong>
+                      <p className="mt-2 type-meta text-muted-foreground">
+                        請為每一組資料選擇專案、測站與測項。
+                      </p>
+                    </div>
+                  </div>
+                ) : !series.length || !availableSeries.length ? (
+                  <div className="grid h-107.5 place-items-center rounded-lg border border-dashed border-border bg-muted/30 px-6 text-center">
+                    <div className="max-w-md">
+                      <strong className="block type-body font-semibold text-foreground">
+                        查無資料
+                      </strong>
+                      <p className="mt-2 type-meta text-muted-foreground">
+                        目前條件沒有可顯示的監測資料，請調整時間或比較項目。
+                      </p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <Chart key={chartKey} options={chartOptions}>
+                      <Exporting sourceWidth={1200} sourceHeight={800} scale={2} />
+                    </Chart>
+
+                    {querying && (
+                      <div className="absolute inset-2 grid place-items-center rounded-lg bg-surface/75 type-body font-semibold text-primary backdrop-blur-[1px] sm:inset-3">
+                        分析中…
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+            </section>
+          </main>
         </div>
-      </BaseCard>
+      </section>
+      </div>
+
 
       <BaseDialog
         open={clearOpen}
         onOpenChange={setClearOpen}
-        title="確定清除所有比對資料？"
-        description="此操作會移除目前所有比對設定，且無法復原。"
+        title="確定清除所有比較資料？"
+        description="清除目前所有比較資料。"
         onConfirm={clearAll}
         confirmText="清除"
       />
     </div>
-  )
+  );
 }
