@@ -273,7 +273,16 @@ router.post('/sensors/qaqc/test-serials', verifyToken, async (req, res) => {
   try {
     const aiotDb = await getConnection('AIOT');
 
-    const query = `SELECT DISTINCT [SN],[conConfig] FROM [AIOT].[dbo].[logQaqcN] WHERE [dt_F] >= @startDateTime AND [dt_T] <= @endDateTime`;
+    const query = `
+      SELECT DISTINCT [SN],[conConfig] 
+      FROM [AIOT].[dbo].[logQaqcN] 
+      WHERE
+        [dt_F] < @EndDateTime
+        AND (
+            [dt_T] > @StartDateTime
+            OR [dt_T] IS NULL
+        )
+      ORDER BY [SN];`
     const result = await aiotDb
       .request()
       .input('startDateTime', sql.VarChar, startDateTime)
