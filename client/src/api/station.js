@@ -97,7 +97,7 @@ export const getStationDisconnectedData = async (params) => {
 };
 
 export const getStationData = async (STID, params) => {
-  const response = await api.post(`/station/data/${STID}`, params);
+  const response = await api.post(`/station/data/${STID}`, params, { timeout: 60000 });
   return response.data.data;
 };
 
