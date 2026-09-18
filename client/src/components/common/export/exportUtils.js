@@ -100,8 +100,24 @@ const base64ToUint8Array = (base64String) => {
   return bytes;
 };
 
+const mapWithConcurrency = async (items, concurrency, mapper) => {
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex;
+        nextIndex += 1;
+        await mapper(items[currentIndex], currentIndex);
+      }
+    },
+  );
+
+  await Promise.all(workers);
+};
+
 // Excel 有圖片(目前只有巡檢報表使用)
-export const exportToExcelWithImage = async ( data, columns, filename = "export" ) => {
+export const exportToExcelWithImage = async ( data, columns, filename = "export", imageLoader ) => {
 
   const imageCellWidth = 40;
   const imageCellHeight = 360;
@@ -121,6 +137,31 @@ export const exportToExcelWithImage = async ( data, columns, filename = "export"
     "South",
     "North",
   ];
+
+  const imageSources = [...new Set(
+    data.flatMap((item) => imageColumns.map((key) => item[key]).filter(Boolean)),
+  )];
+  const imageAssets = new Map();
+
+  await mapWithConcurrency(imageSources, 8, async (imageSource) => {
+    try {
+      const isBase64 = imageSource.startsWith("data:image/");
+      const extension = isBase64
+        ? imageSource.match(/^data:image\/(\w+);base64,/)?.[1] || "jpeg"
+        : imageSource.split("?")[0].match(/\.([a-zA-Z0-9]+)$/)?.[1] || "jpeg";
+      const buffer = isBase64
+        ? base64ToUint8Array(imageSource)
+        : new Uint8Array(await (await imageLoader(imageSource)).arrayBuffer());
+
+      imageAssets.set(imageSource, {
+        buffer,
+        extension: extension === "jpg" ? "jpeg" : extension,
+      });
+    } catch (error) {
+      console.error("圖片下載失敗：", imageSource, error);
+      imageAssets.set(imageSource, null);
+    }
+  });
 
   worksheet.addRow([
     "",
@@ -186,14 +227,16 @@ export const exportToExcelWithImage = async ( data, columns, filename = "export"
         continue;
       }
 
-      const imageBase64 = item[key];
+      const imageSource = item[key];
 
-      if (!imageBase64) {
+      if (!imageSource) {
         continue;
       }
 
       try {
-        const extension = imageBase64.match(/^data:image\/(\w+);base64,/)?.[1] || "jpeg";
+        const imageAsset = imageAssets.get(imageSource);
+        if (!imageAsset) continue;
+
         const displaySize = {
           width: imageMaxWidth,
           height: imageMaxHeight,
@@ -201,8 +244,8 @@ export const exportToExcelWithImage = async ( data, columns, filename = "export"
 
         const imageId =
           workbook.addImage({
-            buffer: base64ToUint8Array(imageBase64),
-            extension: extension === "jpg" ? "jpeg" : extension,
+            buffer: imageAsset.buffer,
+            extension: imageAsset.extension,
           });
 
         worksheet.addImage(

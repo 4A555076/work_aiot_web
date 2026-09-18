@@ -8,7 +8,7 @@ import BaseCard from "@/components/common/card/BaseCard";
 import BaseSelect from "@/components/common/select/BaseSelect";
 import BaseApiLoaderWrapper from "@/components/common/api/ApiLoaderWrapper";
 import ExportExcelWithImageButton from "@/components/common/export/ExportExcelWithImageButton";
-import { useProjectsList, useInspectionData } from "@/hook/useInspectionReport";
+import { useProjectsList, useInspectionData, useInspectionImage } from "@/hook/useInspectionReport";
 import BaseDialog from "@/components/common/dialog/BaseDialog";
 import { Download, Expand } from "lucide-react";
 
@@ -41,14 +41,19 @@ const downloadImage = async (url, filename) => {
 
 const ImageCell = ({ url, alt, filename }) => {
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const { displayUrl, loadFailed } = useInspectionImage(url);
 
   if (!url) {
     return <span className="text-muted-foreground">暫無圖片</span>;
   }
 
+  if (!displayUrl) {
+    return <span className="text-muted-foreground">{loadFailed ? "圖片載入失敗" : "圖片載入中…"}</span>;
+  }
+
   return (
     <div className="flex flex-row gap-2">
-      <img src={url} className="h-32 w-24 object-cover" alt={alt} />
+      <img src={displayUrl} className="h-32 w-24 object-cover" alt={alt} />
       <div className="flex flex-col gap-2">
         <BaseButton
           type="button"
@@ -71,7 +76,7 @@ const ImageCell = ({ url, alt, filename }) => {
         >
           <div className="flex items-center justify-center overflow-auto rounded-lg bg-black/5 p-2">
             <img
-              src={url}
+              src={displayUrl}
               className="max-h-[60vh] max-w-full object-contain"
               alt={`${alt}放大預覽`}
             />
@@ -82,7 +87,7 @@ const ImageCell = ({ url, alt, filename }) => {
               variant="outline"
               size="icon-sm"
               className="h-8 w-8 p-0"
-              onClick={() => downloadImage(url, filename)}
+              onClick={() => downloadImage(displayUrl, filename)}
               aria-label={`下載${alt}`}
               title="下載圖片"
             >
@@ -96,7 +101,7 @@ const ImageCell = ({ url, alt, filename }) => {
           variant="outline"
           size="icon-sm"
           className="h-7 w-7 p-0"
-          onClick={() => downloadImage(url, filename)}
+          onClick={() => downloadImage(displayUrl, filename)}
           aria-label={`下載${alt}`}
           title="下載圖片"
         >
@@ -129,6 +134,7 @@ export default function InspectionReportPage() {
     loading: loadingInspection,
     error: errorInspection,
     fetchInspectionData,
+    fetchInspectionImageBlob,
   } = useInspectionData();
 
   const columns = [
@@ -221,7 +227,7 @@ export default function InspectionReportPage() {
       startTime: dayjs().subtract(3, "day").startOf("day").format("YYYY-MM-DD"),
       endTime: dayjs().endOf("day").format("YYYY-MM-DD"),
     }));
-  }, []);
+  }, [fetchProjectsList]);
 
 
 
@@ -272,7 +278,12 @@ export default function InspectionReportPage() {
             title="巡檢紀錄列表" 
             subtitle={`共 ${inspectionData.length} 筆巡檢資料`}
             headerRight={
-               <ExportExcelWithImageButton data={inspectionData} columns={columns} filename="巡檢紀錄"/>
+               <ExportExcelWithImageButton
+                 data={inspectionData}
+                 columns={columns}
+                 filename="巡檢紀錄"
+                 imageLoader={fetchInspectionImageBlob}
+               />
             }
           >
             <BaseApiLoaderWrapper

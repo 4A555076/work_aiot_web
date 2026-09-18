@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const express = require('express');
 const router = express.Router();
 const sql = require('mssql');
@@ -13,6 +14,21 @@ const { idGenerateDateSequence, idGenerateMonthlySequence } = require('../utils/
 const { uploadCreateImageMiddleware, uploadRunMiddleware } = require('../utils/uploadUtils');
 
 const INSPECTION_IMAGE_BASE_PATH = '\\\\192.168.3.204\\JSEnE_new\\JS99_暫存區\\_datAIOT\\_inspection_Image';
+const INSPECTION_IMAGE_DIRECTIONS = ['East', 'South', 'North', 'West'];
+
+function createInspectionImageSignature(userID, bookID, fileName) {
+  return crypto
+    .createHmac('sha256', process.env.JWT_TOKEN)
+    .update(`${userID}\0${bookID}\0${fileName}`)
+    .digest('hex');
+}
+
+function inspectionImageSignatureIsValid(signature, userID, bookID, fileName) {
+  if (typeof signature !== 'string' || !/^[a-f0-9]{64}$/i.test(signature)) return false;
+
+  const expected = createInspectionImageSignature(userID, bookID, fileName);
+  return crypto.timingSafeEqual(Buffer.from(signature, 'hex'), Buffer.from(expected, 'hex'));
+}
 
 router.post('/projects', verifyToken, async (req, res) => {
   const { ID } = req.user;
@@ -392,6 +408,28 @@ router.post('/stations/inspections', verifyToken, async (req, res) => {
       .input('PJID', sql.VarChar, PJID)
       .query(query);
 
+    const validIITs = [...new Set(result.recordset.map((record) => record.IIT).filter(Boolean))];
+
+    if (validIITs.length === 0) {
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    // SQL Server allows at most 2,100 parameters per request. A project normally has
+    // far fewer stations, but retain the old in-memory filtering as a safe fallback.
+    const canFilterInQuery = validIITs.length <= 2000;
+    const inspectionRequest = iotDb
+      .request()
+      .input('startDateTime', sql.Date, startDateTime)
+      .input('endDateTime', sql.Date, endDateTime);
+
+    const iitFilter = canFilterInQuery
+      ? `AND A.[IIT] IN (${validIITs.map((iit, index) => {
+          const parameterName = `iit${index}`;
+          inspectionRequest.input(parameterName, sql.VarChar, iit);
+          return `@${parameterName}`;
+        }).join(', ')})`
+      : '';
+
     const query2 = `
       SELECT 
         A.[BookID],A.[IIT],A.[InspectionID],A.[StartDate],A.[StartTime],
@@ -402,59 +440,61 @@ router.post('/stations/inspections', verifyToken, async (req, res) => {
       LEFT JOIN [IOT].[dbo].[InspectionResult] B ON A.[BookID] = B.[BookID]
       LEFT JOIN [IOT].[dbo].[InspectionImg] C ON A.[BookID] = C.[BookID]
       WHERE A.[StartDate] BETWEEN @startDateTime AND @endDateTime
+      ${iitFilter}
+      ORDER BY A.[StartDate] DESC, A.[StartTime] DESC
     `;
 
-    const result2 = await iotDb
-      .request()
-      .input('startDateTime', sql.VarChar, startDateTime)
-      .input('endDateTime', sql.VarChar, endDateTime)
-      .query(query2);
+    const result2 = await inspectionRequest.query(query2);
 
-    const validIITs = new Set(result.recordset.map((record) => record.IIT)); // 使用 Set 提升搜尋效能 O(1)
-    const filteredResults = result2.recordset.filter((record) => validIITs.has(record.IIT));
+    const validIITSet = new Set(validIITs);
+    const filteredResults = canFilterInQuery
+      ? result2.recordset
+      : result2.recordset.filter((record) => validIITSet.has(record.IIT));
     
     const renamedResults = fileRenamePathKeys(filteredResults);
 
-    const updatedResults = await Promise.all(
-      renamedResults.map(async (record) => {
-        const directions = ['East', 'South', 'North', 'West'];
+    // Several inspection records can share the same date folder. Read each network
+    // directory only once instead of once per record.
+    const folderFiles = new Map();
+    const folderPrefixes = [...new Set(
+      renamedResults
+        .map((record) => record.BookID?.substring(0, 8))
+        .filter(Boolean),
+    )];
+
+    await Promise.all(folderPrefixes.map(async (prefix) => {
+      try {
+        folderFiles.set(prefix, await fs.promises.readdir(path.join(INSPECTION_IMAGE_BASE_PATH, prefix)));
+      } catch (error) {
+        folderFiles.set(prefix, []);
+      }
+    }));
+
+    const updatedResults = renamedResults.map((record) => {
         const bookIDPrefix = record.BookID ? record.BookID.substring(0, 8) : '';
-        const folderPath = path.join(INSPECTION_IMAGE_BASE_PATH, bookIDPrefix);
-        let existingFiles = [];
-        try {
-          existingFiles = await fs.promises.readdir(folderPath);
-        } catch (e) {
-          existingFiles = [];
-        }
+        const existingFiles = folderFiles.get(bookIDPrefix) || [];
 
-        // 對 4 個方向進行處理
-        await Promise.all(
-          directions.map(async (direction) => {
-            if (!record[direction]) {
-              const targetPrefix = `${record.BookID}_${direction}.`;
-              const matchedFile = existingFiles.find((file) =>
-                file.toLowerCase().startsWith(targetPrefix.toLowerCase())
-              );
+        INSPECTION_IMAGE_DIRECTIONS.forEach((direction) => {
+          const storedFileName = typeof record[direction] === 'string'
+            ? path.basename(record[direction].replace(/\\/g, '/'))
+            : '';
+          const targetPrefix = `${record.BookID}_${direction}.`.toLowerCase();
+          const matchedFile = existingFiles.find((file) =>
+            file.toLowerCase() === storedFileName.toLowerCase()
+            || file.toLowerCase().startsWith(targetPrefix)
+          );
 
-              if (matchedFile) {
-                const filePath = path.join(folderPath, matchedFile);
-                try {
-                  const fileBuffer = await fs.promises.readFile(filePath); // 非同步讀取
-                  const ext = path.extname(matchedFile).slice(1);
-                  record[direction] = `data:image/${ext};base64,${fileBuffer.toString('base64')}`;
-                } catch (readErr) {
-                  record[direction] = null;
-                }
-              } else {
-                record[direction] = null;
-              }
-            }
-          })
-        );
+          if (!matchedFile) {
+            record[direction] = null;
+            return;
+          }
+
+          const signature = createInspectionImageSignature(ID, record.BookID, matchedFile);
+          record[direction] = `/stations/inspections/images/${encodeURIComponent(record.BookID)}/${encodeURIComponent(matchedFile)}?signature=${signature}`;
+        });
 
         return record;
-      })
-    );
+      });
 
     res.status(200).json({
       success: true,
@@ -468,6 +508,43 @@ router.post('/stations/inspections', verifyToken, async (req, res) => {
       message: '伺服器錯誤',
       error: error.message,
     });
+  }
+});
+
+router.get('/stations/inspections/images/:bookID/:fileName', verifyToken, async (req, res) => {
+  const { ID } = req.user;
+  const { bookID, fileName } = req.params;
+  const { signature } = req.query;
+
+  const isSafeBookID = /^[A-Za-z0-9_-]+$/.test(bookID);
+  const isSafeFileName = path.basename(fileName) === fileName
+    && INSPECTION_IMAGE_DIRECTIONS.some((direction) =>
+      fileName.toLowerCase().startsWith(`${bookID}_${direction}.`.toLowerCase()),
+    );
+
+  if (!isSafeBookID || !isSafeFileName
+    || !inspectionImageSignatureIsValid(signature, ID, bookID, fileName)) {
+    return res.status(403).json({ success: false, message: '無權存取此圖片' });
+  }
+
+  const filePath = path.join(INSPECTION_IMAGE_BASE_PATH, bookID.substring(0, 8), fileName);
+
+  try {
+    const fileStat = await fs.promises.stat(filePath);
+    if (!fileStat.isFile()) {
+      return res.status(404).json({ success: false, message: '找不到圖片' });
+    }
+
+    res.type(path.extname(fileName));
+    res.set('Cache-Control', 'private, max-age=3600');
+    return fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return res.status(404).json({ success: false, message: '找不到圖片' });
+    }
+
+    console.error(`${req.method} ${req.originalUrl} error:`, error);
+    return res.status(500).json({ success: false, message: '圖片讀取失敗' });
   }
 });
 
