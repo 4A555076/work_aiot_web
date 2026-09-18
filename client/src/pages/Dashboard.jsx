@@ -201,8 +201,6 @@ const createDefaultReportForms = () => {
   };
 };
 
-// 共用顯示元件
-
 function EmptyState({ children, compact = false }) {
   return (
     <div
@@ -516,10 +514,8 @@ function RealtimeUpdateCountdown({ nextUpdateAt, refreshing }) {
 }
 
 export default function DashboardPage() {
-  // 頁面資料
   const [searchParams] = useSearchParams();
   const requestedStationApplied = useRef("");
-  const [inspectionStation, setInspectionStation] = useState(null);
   const selectedStations = useStationSelections(getDashboardStations);
   const {
     activeKey,
@@ -548,19 +544,7 @@ export default function DashboardPage() {
     isEPA,
   } = useDashboard(selectedStations);
 
-  useEffect(() => {
-    const requestedKey = searchParams.get("station") || "";
-    if (
-      requestedKey &&
-      requestedStationApplied.current !== requestedKey &&
-      selectedStations.some((item) => keyOf(item) === requestedKey)
-    ) {
-      requestedStationApplied.current = requestedKey;
-      setActiveKey(requestedKey);
-    }
-  }, [searchParams, selectedStations, setActiveKey]);
-
-  // 分析圖表狀態
+  const [inspectionStation, setInspectionStation] = useState(null);
   const [lineSettingsOpen, setLineSettingsOpen] = useState(false);
   const [lineVisibleModels, setLineVisibleModels] = useState([]);
   const [lineTypes, setLineTypes] = useState({});
@@ -580,11 +564,9 @@ export default function DashboardPage() {
   const [mobileReportOpen, setMobileReportOpen] = useState(false);
   const [mobileDistributionOpen, setMobileDistributionOpen] = useState(false);
 
-  // 報表狀態
   const [reportType, setReportType] = useState("data");
   const [reportForms, setReportForms] = useState(createDefaultReportForms);
 
-  // 新增測站
   const [stationSwitcherOpen, setStationSwitcherOpen] = useState(false);
   const [stationSwitchKeyword, setStationSwitchKeyword] = useState("");
   const [stationSearchOpen, setStationSearchOpen] = useState(false);
@@ -621,79 +603,6 @@ export default function DashboardPage() {
       });
   }, [authorizedStations, selectedStations, stationKeyword]);
 
-  const handleStationSearchToggle = async () => {
-    setStationSearchOpen(true);
-    setStationSearchLoading(true);
-    setStationSearchError(null);
-    try {
-      const [authorizedResult, epaResult] = await Promise.allSettled([
-        getAuthorizedStationsData({ enabled: 1 }),
-        getTaqmnStationList(),
-      ]);
-      const authorized = authorizedResult.status === "fulfilled" && Array.isArray(authorizedResult.value)
-        ? authorizedResult.value
-        : [];
-      const epa = epaResult.status === "fulfilled" && Array.isArray(epaResult.value)
-        ? epaResult.value.map((item) => ({ ...item, PJID: "TAQMN" }))
-        : [];
-
-      if (authorizedResult.status === "rejected") {
-        console.error("getAuthorizedStationsData error:", authorizedResult.reason);
-      }
-      if (epaResult.status === "rejected") {
-        console.error("getTaqmnStationList error:", epaResult.reason);
-      }
-      if (!authorized.length && !epa.length && authorizedResult.status === "rejected" && epaResult.status === "rejected") {
-        throw new Error("無法取得測站資料");
-      }
-
-      setAuthorizedStations([...authorized, ...epa]);
-    } catch (searchError) {
-      console.error("getAuthorizedStationsData error:", searchError);
-      setAuthorizedStations([]);
-      setStationSearchError("無法取得測站資料");
-    } finally {
-      setStationSearchLoading(false);
-    }
-  };
-
-  const handleAddStation = (item) => {
-    const stationToAdd = { PJID: item.PJID, STID: item.STID };
-    const result = addDashboardStation(stationToAdd);
-    if (!result.added) {
-      setStationSearchError(
-        result.reason === "duplicate" ? "此測站已在切換選單中" : "無法新增測站",
-      );
-      return;
-    }
-
-    setStationSearchOpen(false);
-    setStationSwitcherOpen(false);
-    setStationSwitchKeyword("");
-    setStationKeyword("");
-    setStationSearchError(null);
-    window.setTimeout(() => setActiveKey(keyOf(stationToAdd)), 0);
-  };
-
-  const handleStationChange = (item) => {
-    setActiveKey(keyOf(item));
-    setStationSwitcherOpen(false);
-    setStationSwitchKeyword("");
-  };
-
-  const handleDashboardRefresh = async () => {
-    setManualRefreshing(true);
-    try {
-      await Promise.all([
-        searchDashboard(boxplotSettings),
-        isEPA ? Promise.resolve() : selectRealtimeType(realtimeType),
-      ]);
-    } finally {
-      setManualRefreshing(false);
-    }
-  };
-
-  // 測站資訊
   const wdModel = models.find((item) =>
     /(^|\b)WD\b|風向/i.test(`${item.name || ""} ${item.label || ""}`),
   );
@@ -708,7 +617,6 @@ export default function DashboardPage() {
     .join(" - ");
   const stationTitle = getStationInfoTitle(station);
 
-  // 即時數據
   const latestFive = realtime.slice(0, 5);
   const latest = latestFive[0];
   const realtimeModels = useMemo(
@@ -729,14 +637,6 @@ export default function DashboardPage() {
   const latestTimeLabel = latestDateTime && dayjs(latestDateTime).isValid()
     ? dayjs(latestDateTime).format("HH:mm")
     : "—";
-  const latestAgeLabel = (() => {
-    if (!latestDateTime || !dayjs(latestDateTime).isValid()) return "等待第一筆資料";
-    const minutes = Math.max(0, dayjs().diff(dayjs(latestDateTime), "minute"));
-    if (minutes < 1) return "剛剛更新";
-    if (minutes < 60) return `${minutes} 分鐘前`;
-    const hours = Math.floor(minutes / 60);
-    return hours < 24 ? `${hours} 小時前` : dayjs(latestDateTime).format("MM/DD HH:mm");
-  })();
   const latestFiveDates = latestFive
     .map((row) => row.Date_Time)
     .filter(Boolean);
@@ -770,21 +670,21 @@ export default function DashboardPage() {
     || realtimeModels.find(isPm25Model) || realtimeModels[0];
   const analysisTargetValue = analysisSensor?.value;
 
-  // 分析圖表衍生資料
   const selectedBoxplotModel = getDashboardModels(models, boxplotModel);
   const selectedHeatmapModel = getDashboardModels(models, heatmapModel);
   const modelValuesKey = models.map((item) => item.value).join("|");
 
-  // 分析圖表事件
-  const applyBoxplotSettings = async (nextSettings) => {
-    setBoxplotSettings(nextSettings);
-    await searchDashboard(nextSettings);
-  };
-
-  const updateAnalysisCharts = async () => {
-    await searchDashboard(boxplotSettings);
-    setAnalysisControlsOpen(false);
-  };
+  useEffect(() => {
+    const requestedKey = searchParams.get("station") || "";
+    if (
+      requestedKey &&
+      requestedStationApplied.current !== requestedKey &&
+      selectedStations.some((item) => keyOf(item) === requestedKey)
+    ) {
+      requestedStationApplied.current = requestedKey;
+      setActiveKey(requestedKey);
+    }
+  }, [searchParams, selectedStations, setActiveKey]);
 
   useEffect(() => {
     setLineVisibleModels(
@@ -837,8 +737,6 @@ export default function DashboardPage() {
       };
     });
   }, [models]);
-
-
   const dailyReportModelOptions = useMemo(
     () =>
       models
@@ -853,33 +751,138 @@ export default function DashboardPage() {
   const reportRangeInvalid = !currentReportForm.startTime || !currentReportForm.endTime
     || !dayjs(currentReportForm.startTime).isValid() || !dayjs(currentReportForm.endTime).isValid()
     || dayjs(currentReportForm.startTime).isAfter(dayjs(currentReportForm.endTime));
+  const reportRows = useMemo(
+    () => reports?.[reportType] || [],
+    [reports, reportType],
+  );
+  const columns = useMemo(
+    () => createReportColumns(reportRows, reportType),
+    [reportRows, reportType],
+  );
+
+  const handleStationSearchToggle = async () => {
+    setStationSearchOpen(true);
+    setStationSearchLoading(true);
+    setStationSearchError(null);
+
+    try {
+      const [authorizedResult, epaResult] = await Promise.allSettled([
+        getAuthorizedStationsData({ enabled: 1 }),
+        getTaqmnStationList(),
+      ]);
+      const authorized =
+        authorizedResult.status === "fulfilled" && Array.isArray(authorizedResult.value)
+          ? authorizedResult.value
+          : [];
+      const epa =
+        epaResult.status === "fulfilled" && Array.isArray(epaResult.value)
+          ? epaResult.value.map((item) => ({ ...item, PJID: "TAQMN" }))
+          : [];
+
+      if (authorizedResult.status === "rejected") {
+        console.error("getAuthorizedStationsData error:", authorizedResult.reason);
+      }
+      if (epaResult.status === "rejected") {
+        console.error("getTaqmnStationList error:", epaResult.reason);
+      }
+      if (
+        !authorized.length &&
+        !epa.length &&
+        authorizedResult.status === "rejected" &&
+        epaResult.status === "rejected"
+      ) {
+        throw new Error("無法取得測站資料");
+      }
+
+      setAuthorizedStations([...authorized, ...epa]);
+    } catch (searchError) {
+      console.error("getAuthorizedStationsData error:", searchError);
+      setAuthorizedStations([]);
+      setStationSearchError("無法取得測站資料");
+    } finally {
+      setStationSearchLoading(false);
+    }
+  };
+
+  const handleAddStation = (item) => {
+    const stationToAdd = { PJID: item.PJID, STID: item.STID };
+    const result = addDashboardStation(stationToAdd);
+    if (!result.added) {
+      setStationSearchError(
+        result.reason === "duplicate" ? "此測站已在切換選單中" : "無法新增測站",
+      );
+      return;
+    }
+
+    setStationSearchOpen(false);
+    setStationSwitcherOpen(false);
+    setStationSwitchKeyword("");
+    setStationKeyword("");
+    setStationSearchError(null);
+    window.setTimeout(() => setActiveKey(keyOf(stationToAdd)), 0);
+  };
+
+  const handleStationChange = (item) => {
+    setActiveKey(keyOf(item));
+    setStationSwitcherOpen(false);
+    setStationSwitchKeyword("");
+  };
+
+  const handleDashboardRefresh = async () => {
+    setManualRefreshing(true);
+    try {
+      await Promise.all([
+        searchDashboard(boxplotSettings),
+        isEPA ? Promise.resolve() : selectRealtimeType(realtimeType),
+      ]);
+    } finally {
+      setManualRefreshing(false);
+    }
+  };
+
+  const applyBoxplotSettings = async (nextSettings) => {
+    setBoxplotSettings(nextSettings);
+    await searchDashboard(nextSettings);
+  };
+
+  const updateAnalysisCharts = async () => {
+    await searchDashboard(boxplotSettings);
+    setAnalysisControlsOpen(false);
+  };
+
   const updateReportForm = (field, value) => {
     setReportForms((current) => ({
       ...current,
       [reportType]: { ...current[reportType], [field]: value },
     }));
   };
+
   const searchReport = async () => {
     if (
       !currentReportForm.startTime ||
       !currentReportForm.endTime ||
       dayjs(currentReportForm.startTime).isAfter(dayjs(currentReportForm.endTime))
-    )
+    ) {
       return;
+    }
 
     await fetchDashboardReport(reportType, currentReportForm);
   };
 
-  const reportRows = reports?.[reportType] || [];
-
-  const columns = useMemo(
-    () => createReportColumns(reportRows, reportType),
-    [reportRows, reportType],
-  );
-
-  // Highcharts 設定
   const chartOptions = useMemo(() => {
     if (!history.length || !models.length) return {};
+
+    const queryStartTimestamp = dayjs(query.startTime).utc(true).valueOf();
+    const queryEndTimestamp = dayjs(query.endTime).utc(true).valueOf();
+    const nowTimestamp = dayjs().utc(true).valueOf();
+    const timeXAxisRange = {
+      min: Number.isFinite(queryStartTimestamp)
+        ? Math.min(queryStartTimestamp, nowTimestamp)
+        : undefined,
+      max: Number.isFinite(queryEndTimestamp)
+        ? Math.min(queryEndTimestamp, nowTimestamp)
+        : nowTimestamp,
+    };
 
     const common = {
       chart: {
@@ -936,6 +939,7 @@ export default function DashboardPage() {
               ...common,
               xAxis: {
                 type: "datetime",
+                ...timeXAxisRange,
                 dateTimeLabelFormats: {
                   minute: '%H:%M',
                   hour:   '%H:%M' ,
@@ -1148,11 +1152,6 @@ const splitAxisHeight = displayedLineModels.length
   ? 100 / displayedLineModels.length
   : 100;
 
-
-/* ==============================
-   Y Axis
-============================== */
-
 const lineYAxis = hasSeparateLineAxes
   ? displayedLineModels.map(({ item }, axisIndex) => ({
       title: {
@@ -1199,86 +1198,79 @@ const lineYAxis = hasSeparateLineAxes
       tickLength: 0,
     };
 
+  const line = {
+    ...common,
 
-/* ==============================
-   Line Chart
-============================== */
+    chart: {
+      ...common.chart,
 
-const line = {
-  ...common,
+      height: isSplitAxes
+        ? Math.max(430, displayedLineModels.length * 180)
+        : common.chart.height,
 
-  chart: {
-    ...common.chart,
-
-    height: isSplitAxes
-      ? Math.max(430, displayedLineModels.length * 180)
-      : common.chart.height,
-
-    alignTicks: !isSplitAxes,
-  },
-
-  xAxis: {
-    type: "datetime",
-    crosshair: true,
-
-    // 每次模式切換都明確重新設定
-    lineWidth: 1,
-    tickLength: 10,
-
-    labels: {
-      enabled: true,
+      alignTicks: !isSplitAxes,
     },
 
-    ...(lineHourlyXAxis
-      ? {
-          tickInterval: 60 * 60 * 1000,
-          labels: {
-            enabled: true,
-            format: "{value:%m/%d %H:%M}",
-            rotation: -90,
-            align: "right",
+    xAxis: {
+      type: "datetime",
+        ...timeXAxisRange,
+        crosshair: true,
+        startOnTick: false,
+        endOnTick: false,
+        tickInterval: lineHourlyXAxis ? 60 * 60 * 1000 : undefined,
+        labels: {
+          rotation: lineHourlyXAxis ? -90 : 0,
+          align: lineHourlyXAxis ? "right" : "center",
+          step: 1,
+          formatter: function () {
+            const time = this.axis.chart.time;
+            const value = Number(this.value);
+            const currentTime = time.dateFormat("%H:%M", value);
+
+            if (lineHourlyXAxis) {
+              return time.dateFormat("%m/%d %H:%M", value);
+            }
+
+            if (currentTime === "00:00") {
+              return time.dateFormat("%m/%d", value);
+            }
+
+            return currentTime;
           },
-        }
-      : {}),
-
-    dateTimeLabelFormats: {
-      minute: "%H:%M",
-      hour: "%H:%M",
-      day: "%Y-%m-%d",
+        },
     },
-  },
 
-  yAxis: lineYAxis,
+    yAxis: lineYAxis,
 
-  tooltip: {
-    ...common.tooltip,
-    shared: true,
-  },
+    tooltip: {
+      ...common.tooltip,
+      shared: true,
+    },
 
-  series: displayedLineModels.map(
-    ({ item, index }, axisIndex) => ({
-      name: getModelChartLabel(item),
+    series: displayedLineModels.map(
+      ({ item, index }, axisIndex) => ({
+        name: getModelChartLabel(item),
 
-      data: seriesFor(item),
+        data: seriesFor(item),
 
-      color: compareMode
-        ? COLORS[index % COLORS.length]
-        : COLORS[0],
+        color: compareMode
+          ? COLORS[index % COLORS.length]
+          : COLORS[0],
 
-      yAxis: hasSeparateLineAxes
-        ? axisIndex
-        : 0,
+        yAxis: hasSeparateLineAxes
+          ? axisIndex
+          : 0,
 
-      lineWidth: compareMode ? 2 : 3,
+        lineWidth: compareMode ? 2 : 3,
 
-      marker: {
-        enabled: false,
-      },
+        marker: {
+          enabled: false,
+        },
 
-      ...getLineSeriesStyle(lineTypes[item.value]),
-    }),
-  ),
-};
+        ...getLineSeriesStyle(lineTypes[item.value]),
+      }),
+    ),
+  };
 
     const selectedBoxplot =
       analysis?.boxplots?.[selectedBoxplotModel?.value] || {
@@ -1399,9 +1391,11 @@ const line = {
     analysisTargetValue,
     compareMode,
     wsModel,
+    query.startTime,
+    query.endTime,
   ]);
 
-  if (!selectedStations.length)
+  if (!selectedStations.length) {
     return (
       <div className="grid min-h-[70vh] place-items-center">
         <BaseCard className="w-full max-w-2xl" contentClassName="p-6 sm:p-8">
@@ -1439,6 +1433,7 @@ const line = {
         </BaseCard>
       </div>
     );
+  }
 
   return (
     <main className="space-y-8 highcharts-light">
@@ -1512,7 +1507,6 @@ const line = {
                       }
                     }}
                   >
-                    {/* Header */}
                     <div className="flex items-center justify-between border-b border-border px-4 py-3">
                       <div className="min-w-0">
                         <p className="truncate font-semibold">
@@ -1538,7 +1532,6 @@ const line = {
 
                     {!stationSearchOpen ? (
                       <>
-                        {/* 搜尋 */}
                         <div className="border-b border-border p-3">
                           <BaseInput
                             autoFocus
@@ -1557,7 +1550,6 @@ const line = {
                           />
                         </div>
 
-                        {/* 已加入測站 */}
                         <div className="min-h-0 flex-1 overflow-y-auto p-2">
                           <p className="px-2 py-1 text-sm font-medium text-muted-foreground">
                             已加入的測站
@@ -1913,7 +1905,6 @@ const line = {
       </div>
       </section>
 
-      {/* 圖表查詢條件 */}
       <section id="analysis" className="scroll-mt-24 space-y-4 md:space-y-6" aria-labelledby="analysis-title">
         <div className="flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
@@ -1995,7 +1986,6 @@ const line = {
           </div>
         </BaseDialog>
 
-      {/* 分析圖表 */}
       {history.length ? (
         <div id="charts" className="scroll-mt-24 space-y-4 md:space-y-6" aria-label="目前感測項目分析圖表">
           <BaseCard
@@ -2156,7 +2146,6 @@ const line = {
         </div>
       </section>
 
-      {/* 獨立報表查詢 */}
       <section id="reports" className="scroll-mt-24 space-y-4">
         <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border pb-3">
           <div><h2 className="type-card-title font-semibold text-foreground">報表</h2><p className="mt-1 type-meta text-muted-foreground">查詢、檢視及匯出歷史監測資料</p></div>
@@ -2259,6 +2248,7 @@ const line = {
           </BaseCard>
           </div>
       </section>
+
       {inspectionStation && (
         <InspectionEntry dashboardStation={inspectionStation} onClose={() => setInspectionStation(null)} />
       )}
