@@ -61,6 +61,11 @@ const DATE_TIME_KEYS = [
   "Date_Time", "DateTime", "dateTime", "DataTime", "datetime",
   "time", "timestamp", "CreateDate", "createDate",
 ];
+const TIME_TYPE_INTERVALS = {
+  T01: 60 * 1000,
+  T05: 5 * 60 * 1000,
+  T60: 60 * 60 * 1000,
+};
 
 
 let rowSequence = 0;
@@ -164,13 +169,30 @@ const localDateTimeToUtcTimestamp = (value) => {
   );
 };
 
-const normalizePoints = (response, column) => extractRows(response)
-  .map((point) => {
+const insertGapBreaks = (points, timeType) => {
+  const interval = TIME_TYPE_INTERVALS[timeType];
+  if (!interval) return points;
+
+  return points.reduce((result, point) => {
+    const previous = result.at(-1);
+    if (previous && point[0] - previous[0] > interval) {
+      result.push([previous[0] + interval, null]);
+    }
+    result.push(point);
+    return result;
+  }, []);
+};
+
+const normalizePoints = (response, column, timeType) => {
+  const points = extractRows(response).map((point) => {
     if (!point) return null;
     if (Array.isArray(point)) {
       const timestamp = toTimestamp(point[0]);
-      const value = Number(point[1]);
-      return Number.isFinite(timestamp) && Number.isFinite(value) ? [timestamp, value] : null;
+      const rawValue = point[1];
+      const value = rawValue == null || rawValue === "" ? null : Number(rawValue);
+      return Number.isFinite(timestamp)
+        ? [timestamp, Number.isFinite(value) ? value : null]
+        : null;
     }
 
     const detectedTimeKey = Object.keys(point).find(
@@ -183,12 +205,17 @@ const normalizePoints = (response, column) => extractRows(response)
     const nestedValues = findValue(point, "values") ?? findValue(point, "data");
     const rawValue = findValue(point, column) ?? findValue(nestedValues, column);
     const timestamp = toTimestamp(dateTime);
-    const value = rawValue == null || rawValue === "" ? Number.NaN : Number(rawValue);
+    const value = rawValue == null || rawValue === "" ? null : Number(rawValue);
 
-    return Number.isFinite(timestamp) && Number.isFinite(value) ? [timestamp, value] : null;
+    return Number.isFinite(timestamp)
+      ? [timestamp, Number.isFinite(value) ? value : null]
+      : null;
   })
   .filter(Boolean)
   .sort((first, second) => first[0] - second[0]);
+
+  return insertGapBreaks(points, timeType);
+};
 
 const resolveColumn = (row) => row.items.find(
   (item) => item.value === row.column || item.name === row.column,
@@ -515,7 +542,7 @@ export default function ComparePage() {
         PJID: row.PJID,
         STID: row.STID,
         column,
-        data: normalizePoints(result.value, column),
+        data: normalizePoints(result.value, column, row.timeType),
       };
     }).filter(Boolean);
 
