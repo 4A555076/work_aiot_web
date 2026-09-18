@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import dayjs from 'dayjs'
 import utc from "dayjs/plugin/utc";
 dayjs.extend(utc);
-import { getProjectsList, getInspectionData, getInspectionImage } from "@/api/station";
+import { getProjectsList, getInspectionData } from "@/api/station";
 
 
 export function useProjectsList() {
@@ -46,12 +46,8 @@ export function useInspectionData() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
-    const fetchInspectionImageBlob = useCallback(
-        (url, signal) => getInspectionImage(url, signal),
-        [],
-    );
-
     const fetchInspectionData = async (form) => {
+
         setLoading(true);
         setError(null);
 
@@ -84,43 +80,5 @@ export function useInspectionData() {
         loading,
         error,
         fetchInspectionData,
-        fetchInspectionImageBlob,
     };
-}
-
-export function useInspectionImage(url) {
-    const [displayUrl, setDisplayUrl] = useState(url?.startsWith("data:") ? url : null);
-    const [loadFailed, setLoadFailed] = useState(false);
-
-    useEffect(() => {
-        if (!url || url.startsWith("data:") || url.startsWith("blob:")) {
-            setDisplayUrl(url || null);
-            setLoadFailed(false);
-            return undefined;
-        }
-
-        const controller = new AbortController();
-        let objectUrl;
-
-        setDisplayUrl(null);
-        setLoadFailed(false);
-        getInspectionImage(url, controller.signal)
-            .then((blob) => {
-                objectUrl = URL.createObjectURL(blob);
-                setDisplayUrl(objectUrl);
-            })
-            .catch((error) => {
-                if (error?.code !== "ERR_CANCELED") {
-                    console.error("圖片載入失敗:", error);
-                    setLoadFailed(true);
-                }
-            });
-
-        return () => {
-            controller.abort();
-            if (objectUrl) URL.revokeObjectURL(objectUrl);
-        };
-    }, [url]);
-
-    return { displayUrl, loadFailed };
 }
