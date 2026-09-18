@@ -31,7 +31,7 @@ export function useProjectsList() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
 
-    const fetchProjectsList = async () => {
+    const fetchProjectsList = useCallback(async () => {
         setLoading(true);
         setError(null);
 
@@ -51,7 +51,7 @@ export function useProjectsList() {
         } finally {
             setLoading(false);
         }
-    };
+    }, []);
 
     return {
         loading,
@@ -103,10 +103,11 @@ export function useInspectionData() {
             }
             return formatted;
         } catch (requestError) {
-            console.error("error:", err);
+            console.error("取得巡檢資料失敗:", requestError);
             if (latestRequestRef.current === requestID) {
-                console.error("error:", err);
-                const errMsg = err?.response?.data?.message || err?.message || "取得失敗";
+                const errMsg = requestError?.response?.data?.message
+                    || requestError?.message
+                    || "取得失敗";
                 setError(errMsg);
             }
             return null;
