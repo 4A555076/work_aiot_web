@@ -52,12 +52,12 @@ export const deleteDecommissionedStation = async (params) => {
 };
 
 export const getInspectionData = async (params) => {
-  const response = await api.post(`/stations/inspections`, params, { timeout: 60000 });
+  const response = await api.post(`/stations/inspections`, params);
   return response.data.data;
 };
 
 export const getInspectionImage = async (url) => {
-  const response = await api.get(url, { responseType: "blob", timeout: 60000 });
+  const response = await api.get(url, { responseType: "blob" });
   return response.data;
 };
 
@@ -97,7 +97,7 @@ export const getStationDisconnectedData = async (params) => {
 };
 
 export const getStationData = async (STID, params) => {
-  const response = await api.post(`/station/data/${STID}`, params, { timeout: 60000 });
+  const response = await api.post(`/station/data/${STID}`, params);
   return response.data.data;
 };
 
