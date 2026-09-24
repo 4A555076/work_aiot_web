@@ -67,7 +67,12 @@ export default function AlarmOverviewPage() {
         );
       },
     },
-    { accessorKey: "DisconnDurationText", header: "斷線時長" },
+    {
+      id: "DisconnDuration",
+      header: "斷線時長",
+      accessorFn: (row) => Number(row.DisconnMinutes ?? 0),
+      cell: ({ row }) => row.original.DisconnDurationText,
+    },
   ];
 
   const thresholdOverColumns = [
@@ -76,7 +81,12 @@ export default function AlarmOverviewPage() {
     { accessorKey: "Desc", header: "描述" },
     { accessorKey: "ITEM", header: "測項" },
     { accessorKey: "ALARM", header: "異常情形" },
-    { accessorKey: "TOTALTIME", header: "異常時常" },
+    {
+      id: "TOTALTIME",
+      header: "異常時長",
+      accessorFn: (row) => Number(row.TOTALMINUTE ?? 0),
+      cell: ({ row }) => row.original.TOTALTIME,
+    },
     { accessorKey: "CHECKTIME", header: "檢查時間" },
   ];
 
