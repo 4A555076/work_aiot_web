@@ -97,7 +97,7 @@ function getSearchValidationMessage(searchForm) {
 function createStationDataParams(project) {
   return {
     PJID: project,
-    startDateTime: dayjs().subtract(1, "minute").format("YYYY-MM-DD HH:mm"),
+    startDateTime: dayjs().subtract(15, "minute").format("YYYY-MM-DD HH:mm"),
     endDateTime: dayjs().format("YYYY-MM-DD HH:mm"),
     type: "T01",
     top: "TOP",
@@ -411,7 +411,12 @@ export function InspectionEntry({ dashboardStation = null, onClose }) {
     fetchStationInfoData,
   } = useStationInfoData();
 
-  const { data: stationData, loading: loadingStationData, error: errorStationData, fetchStationData } = useStationData();
+  const { 
+    data: stationData, 
+    loading: loadingStationData, 
+    error: errorStationData, 
+    fetchStationData 
+  } = useStationData();
   const {
     data: addedInspectionData,
     error: addInspectionError,
