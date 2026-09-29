@@ -895,43 +895,64 @@ export default function ComparePage() {
                 <table className="w-full min-w-275 border-collapse text-left">
                   <thead className="bg-secondary type-meta text-muted-foreground">
                     <tr className="border-b border-border">
-                      <th className="w-20 px-3 py-2 font-semibold">序列</th>
+                      <th className="w-20 px-3 py-2 font-semibold"></th>
                       <th className="min-w-44 px-2 py-2 font-semibold">專案</th>
-                      <th className="min-w-52 px-2 py-2 font-semibold">測站</th>
+                      <th className="min-w-60 px-2 py-2 font-semibold">測站</th>
                       <th className="min-w-44 px-2 py-2 font-semibold">監測項目</th>
                       <th className="w-28 px-2 py-2 font-semibold">時間間隔</th>
                       <th className="min-w-36 px-2 py-2 font-semibold">圖表類型</th>
-                      <th className="w-20 px-3 py-2 text-right font-semibold">操作</th>
+                      <th className="w-20 px-3 py-2 font-semibold">操作</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
                     {rows.map((row, index) => {
                       const seriesKey = getSeriesKey(index);
+                      const stationSummary = [row.STID, row.Desc]
+                        .filter(Boolean)
+                        .join(" · ");
                       const sourceSummary = [
                         row.stationName || row.STID || `未完成 ${seriesKey}`,
                         row.itemName || row.column,
-                      ].filter(Boolean).join(" · ");
+                      ]
+                        .filter(Boolean)
+                        .join(" · ");
+                      const timeTypeOptions = row.PJID === "TAQMN"
+                        ? TIME_TYPES.filter((item) => item.value === "T60")
+                        : TIME_TYPES;
 
                       return (
                         <tr
                           key={row.rowId}
-                          className="bg-surface align-middle transition-colors hover:bg-muted/25"
+                          className="bg-surface align-top transition-colors hover:bg-muted/25"
                           style={{ borderLeft: `4px solid ${row.color}` }}
                         >
                           <td className="px-3 py-2">
-                            <div className="flex space-x-1">
+                            <div className="flex items-center gap-1">
                               <span
                                 className="grid size-7 shrink-0 place-items-center rounded-lg text-sm font-bold shadow-sm"
                                 style={{ backgroundColor: row.color, color: getContrastColor(row.color) }}
                               >
                                 {seriesKey}
                               </span>
-                              <label className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg border border-border bg-surface" title={`${seriesKey} 圖表顏色`}>
-                                <span className="size-4 rounded-full" style={{ backgroundColor: row.color }} />
-                                <input type="color" aria-label={`序列 ${seriesKey} 顏色`} value={row.color} onChange={(event) => updateRow(row.rowId, { color: event.target.value })} className="sr-only" />
+                              <label
+                                className="grid size-7 shrink-0 cursor-pointer place-items-center rounded-lg border border-border bg-surface"
+                                title={`${seriesKey} 圖表顏色`}
+                              >
+                                <span
+                                  className="size-4 rounded-full"
+                                  style={{ backgroundColor: row.color }}
+                                />
+                                <input
+                                  type="color"
+                                  aria-label={`序列 ${seriesKey} 顏色`}
+                                  value={row.color}
+                                  onChange={(event) => updateRow(row.rowId, {
+                                    color: event.target.value,
+                                  })}
+                                  className="sr-only"
+                                />
                               </label>
                             </div>
-
                           </td>
                           <td className="px-2 py-2">
                             <BaseSelect
@@ -943,8 +964,8 @@ export default function ComparePage() {
                               placeholder="選擇專案"
                             />
                           </td>
-                          <td className="px-2 py-2" title={[row.STID, row.Desc].filter(Boolean).join(" · ")}>
-                            <div className="flex min-w-0 items-center gap-1">
+                          <td className="px-2 py-2">
+                            <div className="min-w-0">
                               <BaseSelect
                                 label=""
                                 value={row.STID}
@@ -954,17 +975,40 @@ export default function ComparePage() {
                                 placeholder={row.loading ? "載入中…" : "選擇測站"}
                                 disabled={!row.PJID || row.loading}
                               />
-                              {row.stationName && (
-                                <BaseButton
-                                  type="button"
-                                  variant="ghost"
-                                  size="icon-xs"
-                                  className="shrink-0"
-                                  title="複製 STID 與 IIT"
-                                  onClick={() => copyStationName(row)}
+
+                              {stationSummary && (
+                                <div
+                                  className="flex min-w-0 items-center gap-1"
+                                  title={stationSummary}
                                 >
-                                  {copiedStationId === row.rowId ? <Check /> : <Copy />}
-                                </BaseButton>
+                                  <p className="flex min-w-0 flex-1 items-center type-meta text-muted-foreground">
+                                    {row.STID && (
+                                      <span className="shrink-0 whitespace-nowrap">{row.STID}</span>
+                                    )}
+                                    {row.STID && row.Desc && (
+                                      <span className="shrink-0 px-1" aria-hidden="true">
+                                        ·
+                                      </span>
+                                    )}
+                                    {row.Desc && (
+                                      <span className="min-w-0 truncate">{row.Desc}</span>
+                                    )}
+                                  </p>
+
+                                  {row.stationName && (
+                                    <BaseButton
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      className="shrink-0"
+                                      title="複製 STID 與 IIT"
+                                      aria-label="複製 STID 與 IIT"
+                                      onClick={() => copyStationName(row)}
+                                    >
+                                      {copiedStationId === row.rowId ? <Check /> : <Copy />}
+                                    </BaseButton>
+                                  )}
+                                </div>
                               )}
                             </div>
                           </td>
@@ -986,9 +1030,7 @@ export default function ComparePage() {
                               label=""
                               value={row.timeType}
                               onChange={(timeType) => updateRow(row.rowId, { timeType })}
-                              options={row.PJID === "TAQMN"
-                                ? TIME_TYPES.filter((item) => item.value === "T60")
-                                : TIME_TYPES}
+                              options={timeTypeOptions}
                               disabled={row.PJID === "TAQMN"}
                             />
                           </td>
@@ -1001,11 +1043,23 @@ export default function ComparePage() {
                             />
                           </td>
                           <td className="px-3 py-2">
-                            <div className="flex justify-end gap-1">
-                              <BaseButton type="button" variant="ghost" size="table-icon" title={`複製 ${sourceSummary}`} onClick={() => duplicateRow(row)}>
+                            <div className="flex items-center justify-end gap-1">
+                              <BaseButton
+                                type="button"
+                                variant="ghost"
+                                size="table-icon"
+                                title={`複製 ${sourceSummary}`}
+                                onClick={() => duplicateRow(row)}
+                              >
                                 <Copy />
                               </BaseButton>
-                              <BaseButton type="button" variant="destructive-ghost" size="table-icon" title={`刪除 ${sourceSummary}`} onClick={() => deleteRow(row)}>
+                              <BaseButton
+                                type="button"
+                                variant="destructive-ghost"
+                                size="table-icon"
+                                title={`刪除 ${sourceSummary}`}
+                                onClick={() => deleteRow(row)}
+                              >
                                 <Trash2 />
                               </BaseButton>
                             </div>
@@ -1052,7 +1106,7 @@ export default function ComparePage() {
                         disabled={!row.PJID || row.loading}
                       />
                       {(row.STID || row.Desc) && (
-                        <div className="mt-1 flex min-w-0 items-center gap-1 px-1">
+                        <div className="flex min-w-0 items-center gap-1 px-1">
                           <p className="min-w-0 flex-1 truncate type-meta text-muted-foreground" title={[row.STID, row.Desc].filter(Boolean).join(" · ")}>
                             {[row.STID, row.Desc].filter(Boolean).join(" · ")}
                           </p>
@@ -1230,7 +1284,11 @@ export default function ComparePage() {
                       </div>
                     </div>
                     <Chart key={chartKey} options={chartOptions}>
-                      <Exporting sourceWidth={1200} sourceHeight={800} scale={2} />
+                      <Exporting
+                        sourceWidth={1200} 
+                        sourceHeight={800} 
+                        scale={2} 
+                      />
                     </Chart>
                     {querying && (
                       <div className="absolute inset-2 grid place-items-center rounded-lg bg-surface/75 type-body font-semibold backdrop-blur-[1px] sm:inset-3">
