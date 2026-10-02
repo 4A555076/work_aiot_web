@@ -27,8 +27,14 @@ const EPA_PROJECT_IDS = new Set(["EPA", "TAQMN"]);
 const REALTIME_INTERVALS = { T01: 60_000, T05: 5 * 60_000, T60: 60 * 60_000 };
 const EMPTY_REPORTS = { data: [], daily: [], monthly: [] };
 const isEPA = (form) => EPA_PROJECT_IDS.has(form?.PJID);
-const errorMessage = (err, fallback) =>
-  err?.response?.data?.message || err?.message || fallback;
+const errorMessage = (err, fallback) => {
+  const response = err?.response?.data;
+  const fieldErrors = response?.fieldErrors && typeof response.fieldErrors === "object"
+    ? Object.values(response.fieldErrors).filter(Boolean)
+    : [];
+
+  return fieldErrors.join(" ") || response?.message || err?.message || fallback;
+};
 
 const millisecondsUntilNextRealtimeUpdate = (type, now = Date.now()) => {
   const interval = REALTIME_INTERVALS[type] || REALTIME_INTERVALS.T01;
@@ -239,8 +245,15 @@ function useDashboardReportData() {
   const [data, setData] = useState(EMPTY_REPORTS);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const requestIdsRef = useRef({});
+  const requestSequenceRef = useRef(0);
+  const pendingRequestIdsRef = useRef(new Set());
 
   const fetchData = useCallback(async (reportType, form) => {
+    const requestId = requestSequenceRef.current + 1;
+    requestSequenceRef.current = requestId;
+    requestIdsRef.current[reportType] = requestId;
+    pendingRequestIdsRef.current.add(requestId);
     setLoading(true);
     setError(null);
     try {
@@ -270,18 +283,25 @@ function useDashboardReportData() {
         : stationRequests[reportType];
 
       const formatted = formatReportRows(await request(payload), reportType);
+      if (requestIdsRef.current[reportType] !== requestId) return null;
+
       setData((current) => ({ ...current, [reportType]: formatted }));
       return formatted;
     } catch (err) {
+      if (requestIdsRef.current[reportType] !== requestId) return null;
+
       console.error("error:", err);
       setError(errorMessage(err, "報表資料載入失敗"));
       return null;
     } finally {
-      setLoading(false);
+      pendingRequestIdsRef.current.delete(requestId);
+      setLoading(pendingRequestIdsRef.current.size > 0);
     }
   }, []);
 
   const resetData = useCallback(() => {
+    requestIdsRef.current = {};
+    pendingRequestIdsRef.current.clear();
     setData(EMPTY_REPORTS);
     setLoading(false);
     setError(null);

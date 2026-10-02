@@ -24,6 +24,45 @@ Dashboard API 依資料來源分成兩組，所有端點皆使用 `POST` 並經�
 資料表與月報表可帶 `modelTypes` 陣列篩選多個測項；日報表使用 `modelType` 篩選單一測項。未提供篩選條件時保留回傳全部測項的相容行為（日報表仍需指定測項）。
 一般測站的數值與筆數為獨立選項，例如 `PM2.5` 與 `PM2.5 (Count)`，可分別或同時查詢。
 
+## 報表查詢契約
+
+六個報表端點共用相同的參數驗證規則：
+
+- 開始、結束時間必須是有效時間，且結束時間不可早於開始時間。
+- 一般測站必須提供 `PJID` 與 `STID`；EPA 必須提供 `STID`。
+- 資料表的 `timeType` 僅接受 `T01`、`T05` 或 `T60`。
+- EPA 與日報表的時間類型由後端固定為 `T60`。
+- 日報表必須提供單一 `modelType`；`modelTypes` 會移除空值與重複值。
+
+驗證失敗回傳 HTTP `400`：
+
+```json
+{
+  "success": false,
+  "code": "INVALID_REPORT_FILTERS",
+  "message": "報表查詢條件不完整或無效。",
+  "fieldErrors": {
+    "endDateTime": "結束時間不可早於開始時間。"
+  }
+}
+```
+
+成功回應保留 `data` 相容性，並增加可稽核的 `meta`：
+
+```json
+{
+  "success": true,
+  "data": [],
+  "meta": {
+    "reportType": "data",
+    "source": "station",
+    "rowCount": 0,
+    "generatedAt": "2026-09-29T00:00:00.000Z",
+    "appliedFilters": {}
+  }
+}
+```
+
 ## 回傳責任
 
 - `realtime`：測站、測項與最新五筆資料。

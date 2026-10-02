@@ -21,6 +21,10 @@ const { buildBoxplots, parseBoxplotOptions } = require('../utils/boxplotUtils');
 const { buildHeatmaps } = require('../utils/heatmapUtils');
 const { buildWindRose } = require('../utils/windRoseUtils');
 const { buildWindVector } = require('../utils/windVectorUtils');
+const {
+  createDashboardReportResponse,
+  validateDashboardReportRequest,
+} = require('../utils/dashboardReportUtils');
 
 const EPA_MODELS = [
   { value: 'SO2', name: '二氧化硫', label: '二氧化硫 SO₂ (ppm)', unit: 'ppm' },
@@ -612,12 +616,20 @@ router.post('/stations/dashboard/wind-vector', verifyToken, async (req, res) => 
 
 // 測站日報表
 router.post('/stations/dashboard/daily-report', verifyToken, async (req, res) => {
-  const { PJID, STID, startDateTime, endDateTime, timeType, modelType } = req.body;
   const { role } = req.user;
 
   if (!role) {
     return res.status(401).json({ success: false, message: 'Role is missing.' });
   }
+
+  const validation = validateDashboardReportRequest(req.body, {
+    source: 'station',
+    reportType: 'daily',
+  });
+  if (!validation.ok) {
+    return res.status(validation.status).json(validation.response);
+  }
+  const { PJID, STID, startDateTime, endDateTime, timeType, modelType } = validation.value;
 
   try {
     const aiotDb = await getConnection('AIOT');
@@ -691,10 +703,11 @@ router.post('/stations/dashboard/daily-report', verifyToken, async (req, res) =>
       return new Date(a.Date_Time) - new Date(b.Date_Time);
     });
 
-    return res.status(200).json({ 
-      success: true, 
-      data: report 
-    });
+    return res.status(200).json(createDashboardReportResponse(report, {
+      source: 'station',
+      reportType: 'daily',
+      filters: validation.value,
+    }));
 
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
@@ -709,12 +722,28 @@ router.post('/stations/dashboard/daily-report', verifyToken, async (req, res) =>
 
 // 測站資料表
 router.post('/stations/dashboard/table', verifyToken, async (req, res) => {
-  const { PJID, STID, startDateTime, endDateTime, timeType, modelTypes = [], flagOnly = false } = req.body;
   const { role } = req.user;
 
   if (!role) {
     return res.status(401).json({ success: false, message: 'Role is missing.' });
   }
+
+  const validation = validateDashboardReportRequest(req.body, {
+    source: 'station',
+    reportType: 'data',
+  });
+  if (!validation.ok) {
+    return res.status(validation.status).json(validation.response);
+  }
+  const {
+    PJID,
+    STID,
+    startDateTime,
+    endDateTime,
+    timeType,
+    modelTypes,
+    flagOnly,
+  } = validation.value;
 
   try {
     const aiotDb = await getConnection('AIOT');
@@ -792,10 +821,11 @@ router.post('/stations/dashboard/table', verifyToken, async (req, res) => {
         return new Date(a.Date_Time).getTime() - new Date(b.Date_Time).getTime();
       });
 
-    res.status(200).json({ 
-      success: true, 
-      data: report 
-    });
+    return res.status(200).json(createDashboardReportResponse(report, {
+      source: 'station',
+      reportType: 'data',
+      filters: validation.value,
+    }));
     
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
@@ -810,14 +840,14 @@ router.post('/stations/dashboard/table', verifyToken, async (req, res) => {
 
 // 測站月報表
 router.post('/stations/dashboard/monthly-report', verifyToken, async (req, res) => {
-  const { startDateTime, endDateTime, PJID, STID, modelTypes = [] } = req.body;
-
-  if (!startDateTime || !endDateTime || !STID) {
-    return res.status(400).json({
-      success: false,
-      message: 'startDateTime、endDateTime 與 STID 為必填欄位。',
-    });
+  const validation = validateDashboardReportRequest(req.body, {
+    source: 'station',
+    reportType: 'monthly',
+  });
+  if (!validation.ok) {
+    return res.status(validation.status).json(validation.response);
   }
+  const { startDateTime, endDateTime, PJID, STID, modelTypes } = validation.value;
 
   try {
     const aiotDb = await getConnection('AIOT');
@@ -889,10 +919,11 @@ router.post('/stations/dashboard/monthly-report', verifyToken, async (req, res) 
         return String(a.Date_Time).localeCompare(String(b.Date_Time));
     });
 
-    res.status(200).json({ 
-      success: true, 
-      data: report 
-    });
+    return res.status(200).json(createDashboardReportResponse(report, {
+      source: 'station',
+      reportType: 'monthly',
+      filters: validation.value,
+    }));
     
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
@@ -1193,16 +1224,14 @@ router.post('/open-data/dashboard/wind-vector', verifyToken, async (req, res) =>
 
 
 router.post('/open-data/dashboard/table', verifyToken, async (req, res) => {
-
-    const { STID, startDateTime, endDateTime, modelTypes = [] } = req.body;
-
-    if (!STID || !startDateTime || !endDateTime) {
-      return res.status(400).json({
-        success: false,
-        message:
-          'STID、startDateTime 與 endDateTime 為必填欄位。',
-      });
+    const validation = validateDashboardReportRequest(req.body, {
+      source: 'epa',
+      reportType: 'data',
+    });
+    if (!validation.ok) {
+      return res.status(validation.status).json(validation.response);
     }
+    const { STID, startDateTime, endDateTime, modelTypes } = validation.value;
 
     try {
       const aiotDb = await getConnection('AIOT');
@@ -1354,10 +1383,11 @@ router.post('/open-data/dashboard/table', verifyToken, async (req, res) => {
           selectedColumnNames
         );
 
-      return res.status(200).json({
-        success: true,
-        data,
-      });
+      return res.status(200).json(createDashboardReportResponse(data, {
+        source: 'epa',
+        reportType: 'data',
+        filters: validation.value,
+      }));
 
     } catch (error) {
       console.error(`${req.method} ${req.originalUrl} error:`, error);
@@ -1371,14 +1401,14 @@ router.post('/open-data/dashboard/table', verifyToken, async (req, res) => {
 );
 
 router.post('/open-data/dashboard/daily-report', verifyToken, async (req, res) => {
-  const { STID, startDateTime, endDateTime, modelType } = req.body;
-
-  if (!STID || !startDateTime || !endDateTime || !modelType) {
-    return res.status(400).json({
-      success: false,
-      message: 'STID、時間範圍與 modelType 為必填欄位。',
-    });
+  const validation = validateDashboardReportRequest(req.body, {
+    source: 'epa',
+    reportType: 'daily',
+  });
+  if (!validation.ok) {
+    return res.status(validation.status).json(validation.response);
   }
+  const { STID, startDateTime, endDateTime, modelType } = validation.value;
 
   try {
     const aiotDb = await getConnection('AIOT');
@@ -1500,10 +1530,11 @@ router.post('/open-data/dashboard/daily-report', verifyToken, async (req, res) =
 
     const data = fillMissingDailyHourlyData(result.recordset || []);
 
-    return res.status(200).json({
-      success: true,
-      data,
-    });
+    return res.status(200).json(createDashboardReportResponse(data, {
+      source: 'epa',
+      reportType: 'daily',
+      filters: validation.value,
+    }));
 
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
@@ -1516,14 +1547,14 @@ router.post('/open-data/dashboard/daily-report', verifyToken, async (req, res) =
 });
 
 router.post('/open-data/dashboard/monthly-report', verifyToken, async (req, res) => {
-  const { STID, startDateTime, endDateTime, modelTypes = [] } = req.body;
-
-  if (!STID || !startDateTime || !endDateTime) {
-    return res.status(400).json({
-      success: false,
-      message: 'STID、startDateTime 與 endDateTime 為必填欄位。',
-    });
+  const validation = validateDashboardReportRequest(req.body, {
+    source: 'epa',
+    reportType: 'monthly',
+  });
+  if (!validation.ok) {
+    return res.status(validation.status).json(validation.response);
   }
+  const { STID, startDateTime, endDateTime, modelTypes } = validation.value;
 
   try {
     const aiotDb = await getConnection('AIOT');
@@ -1654,10 +1685,11 @@ router.post('/open-data/dashboard/monthly-report', verifyToken, async (req, res)
       selectedColumns
     );
 
-    return res.status(200).json({
-      success: true,
-      data,
-    });
+    return res.status(200).json(createDashboardReportResponse(data, {
+      source: 'epa',
+      reportType: 'monthly',
+      filters: validation.value,
+    }));
 
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);

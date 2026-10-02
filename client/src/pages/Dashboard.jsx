@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { InspectionEntry } from "@/pages/InspectionEntry";
 import dayjs from "dayjs";
@@ -41,6 +41,7 @@ import BaseSelect from "@/components/common/select/BaseSelect";
 import BaseTable from "@/components/common/table/BaseTable";
 import ExportCSVButton from "@/components/common/export/ExportCSVButton";
 import ExportPDFButton from "@/components/common/export/ExportPDFButton";
+import ExportExcelButton from "@/components/common/export/ExportExcelButton";
 import BaseTab from "@/components/common/tab/BaseTab";
 import BaseDialog from "@/components/common/dialog/BaseDialog";
 import GoogleMap from "@/components/common/map/GoogleMap";
@@ -85,7 +86,10 @@ const LINE_CHART_LAYOUT_OPTIONS = [
   { value: "split-axes", label: "分行座標軸" },
 ];
 const EPA_DEFAULT_LINE_MODEL_VALUES = new Set(["WD", "AMB_TEMP", "PM25", "RH", "NMHC", "WS"]);
-const COLORS = ["#2caffe","#544fc5","#00e272","#fe6a35","#6b8abc","#d568fb","#2ee0ca","#fa4b42","#feb56a","#91e8e1"];
+const COLORS = Array.from(
+  { length: 10 },
+  (_, index) => `var(--chart-${index + 1})`,
+);
 const EMPTY_MAP_MARKERS = [];
 
 const WIND_DIRECTIONS = [
@@ -190,7 +194,7 @@ const createReportColumns = (rows, reportType) => {
 const createDefaultReportForms = () => {
   const defaultRange = {
     startTime: dayjs().startOf("day").format("YYYY-MM-DDTHH:mm"),
-    endTime: dayjs().format("YYYY-MM-DDTHH:mm"),
+    endTime: dayjs().endOf("day").format("YYYY-MM-DDTHH:mm"),
     timeType: "T01",
   };
 
@@ -566,6 +570,17 @@ export default function DashboardPage() {
 
   const [reportType, setReportType] = useState("data");
   const [reportForms, setReportForms] = useState(createDefaultReportForms);
+  const [reportUpdateSource, setReportUpdateSource] = useState(null);
+  const reportUiRequestIdRef = useRef(0);
+  const initialReportQueriedRef = useRef(false);
+  const [appliedReportRanges, setAppliedReportRanges] = useState(() =>
+    Object.fromEntries(
+      Object.entries(createDefaultReportForms()).map(([type, form]) => [
+        type,
+        { startTime: form.startTime, endTime: form.endTime },
+      ]),
+    ),
+  );
 
   const [stationSwitcherOpen, setStationSwitcherOpen] = useState(false);
   const [stationSwitchKeyword, setStationSwitchKeyword] = useState("");
@@ -748,9 +763,12 @@ export default function DashboardPage() {
   const multiReportModelOptions = dailyReportModelOptions;
 
   const currentReportForm = reportForms[reportType];
+  const currentAppliedReportRange = appliedReportRanges[reportType];
   const reportRangeInvalid = !currentReportForm.startTime || !currentReportForm.endTime
     || !dayjs(currentReportForm.startTime).isValid() || !dayjs(currentReportForm.endTime).isValid()
     || dayjs(currentReportForm.startTime).isAfter(dayjs(currentReportForm.endTime));
+  const hasPendingReportRange = currentReportForm.startTime !== currentAppliedReportRange.startTime
+    || currentReportForm.endTime !== currentAppliedReportRange.endTime;
   const reportRows = useMemo(
     () => reports?.[reportType] || [],
     [reports, reportType],
@@ -850,6 +868,43 @@ export default function DashboardPage() {
     setAnalysisControlsOpen(false);
   };
 
+  const executeReportSearch = useCallback(async (targetReportType, form, source) => {
+    if (
+      !form.startTime ||
+      !form.endTime ||
+      dayjs(form.startTime).isAfter(dayjs(form.endTime))
+    ) {
+      return null;
+    }
+
+    const requestId = reportUiRequestIdRef.current + 1;
+    reportUiRequestIdRef.current = requestId;
+    setReportUpdateSource(source);
+
+    try {
+      return await fetchDashboardReport(targetReportType, form);
+    } finally {
+      if (reportUiRequestIdRef.current === requestId) {
+        setReportUpdateSource(null);
+      }
+    }
+  }, [fetchDashboardReport]);
+
+  const searchReport = async () => {
+    if (reportRangeInvalid) return;
+
+    const result = await executeReportSearch(reportType, currentReportForm, "range");
+    if (result === null) return;
+
+    setAppliedReportRanges((current) => ({
+      ...current,
+      [reportType]: {
+        startTime: currentReportForm.startTime,
+        endTime: currentReportForm.endTime,
+      },
+    }));
+  };
+
   const updateReportForm = (field, value) => {
     setReportForms((current) => ({
       ...current,
@@ -857,17 +912,74 @@ export default function DashboardPage() {
     }));
   };
 
-  const searchReport = async () => {
+  const handleReportTypeChange = (nextReportType) => {
+    setReportType(nextReportType);
+
+    const nextForm = reportForms[nextReportType];
+    const hasValidRange = nextForm.startTime
+      && nextForm.endTime
+      && dayjs(nextForm.startTime).isValid()
+      && dayjs(nextForm.endTime).isValid()
+      && !dayjs(nextForm.startTime).isAfter(dayjs(nextForm.endTime));
+    const hasSelectedModels = nextReportType === "daily"
+      ? Boolean(nextForm.modelType)
+      : Boolean(nextForm.modelTypes.length);
+
+    if (!hasValidRange || !hasSelectedModels) return;
+
+    void executeReportSearch(nextReportType, nextForm, "switch").then((result) => {
+      if (result === null) return;
+
+      setAppliedReportRanges((current) => ({
+        ...current,
+        [nextReportType]: {
+          startTime: nextForm.startTime,
+          endTime: nextForm.endTime,
+        },
+      }));
+    });
+  };
+
+  const updateReportOption = (field, value) => {
+    const nextForm = {
+      ...currentReportForm,
+      ...currentAppliedReportRange,
+      [field]: value,
+    };
+    const hasSelectedModels = reportType === "daily"
+      ? Boolean(nextForm.modelType)
+      : Boolean(nextForm.modelTypes.length);
+
+    updateReportForm(field, value);
+
+    if (hasSelectedModels) {
+      void executeReportSearch(reportType, nextForm, "options");
+    }
+  };
+
+  useEffect(() => {
+    const initialForm = reportForms.data;
     if (
-      !currentReportForm.startTime ||
-      !currentReportForm.endTime ||
-      dayjs(currentReportForm.startTime).isAfter(dayjs(currentReportForm.endTime))
+      initialReportQueriedRef.current ||
+      !activeStation ||
+      !initialForm.modelTypes.length
     ) {
       return;
     }
 
-    await fetchDashboardReport(reportType, currentReportForm);
-  };
+    initialReportQueriedRef.current = true;
+    void executeReportSearch("data", initialForm, "initial").then((result) => {
+      if (result === null) return;
+
+      setAppliedReportRanges((current) => ({
+        ...current,
+        data: {
+          startTime: initialForm.startTime,
+          endTime: initialForm.endTime,
+        },
+      }));
+    });
+  }, [activeStation, executeReportSearch, reportForms.data]);
 
   const chartOptions = useMemo(() => {
     if (!history.length || !models.length) return {};
@@ -1001,7 +1113,7 @@ export default function DashboardPage() {
                     y: speed,
                     direction,
                   })),
-                  color: "#22a7f0",
+                  color: "var(--chart-1)",
                   lineWidth: 3,
                   marker: { enabled: false },
                 },
@@ -1009,13 +1121,13 @@ export default function DashboardPage() {
                   type: "line",
                   name: "風向",
                   data: arrowPoints,
-                  color: "#22a7f0",
+                  color: "var(--chart-1)",
                   marker: {
                     enabled: true,
                     symbol: "windArrow",
                     radius: 10,
-                    fillColor: "#16c55b",
-                    lineColor: "#16c55b",
+                    fillColor: "var(--chart-2)",
+                    lineColor: "var(--chart-2)",
                     lineWidth: 1,
                   },
                 },
@@ -1111,7 +1223,7 @@ export default function DashboardPage() {
                   type: "column",
                   name: series.name,
                   data: series.data,
-                  color: hasValue ? COLORS[index % COLORS.length] : "#cbd5e1",
+                  color: hasValue ? COLORS[index % COLORS.length] : "var(--muted)",
                   custom: { hasValue },
                 };
               }),
@@ -1297,7 +1409,7 @@ const lineYAxis = hasSeparateLineAxes
           name: getModelChartLabel(selectedBoxplotModel, "數值分布"),
           data: selectedBoxplot.data,
           color: COLORS[0],
-          fillColor: "rgba(44,175,254,.18)",
+          fillColor: "color-mix(in srgb, var(--chart-1) 18%, transparent)",
           tooltip: {
             pointFormat:
               "最大值：<b>{point.high}</b><br/>" +
@@ -1436,20 +1548,17 @@ const lineYAxis = hasSeparateLineAxes
   }
 
   return (
-    <main className="space-y-8 highcharts-light">
-      <header className="relative rounded-2xl border border-border bg-card px-4 py-4 shadow-sm sm:px-6 sm:py-5">
+    <main className="dashboard-page highcharts-light">
+      <header className="dashboard-page-header">
         <div className="flex flex-col gap-3 sm:gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
-            <div className="flex items-center gap-2 type-meta font-semibold uppercase tracking-[0.16em] text-primary">
-              <Activity size={15} /> Dashboard
-            </div>
-            <h1 className="mt-1.5 wrap-break-word text-lg font-semibold tracking-tight text-foreground sm:mt-2 sm:text-3xl">
+            <h1 className="type-page-title wrap-break-word font-semibold tracking-tight text-foreground">
               {isEPA ? station?.STID : station?.IIT}
               <span className="mx-2 font-normal text-muted-foreground">·</span>
               {station?.STName || station?.Desc}
             </h1>
-            <div className="mt-2 flex flex-wrap items-center space-x-4 type-body text-muted-foreground">
-              {!isEPA && <span>{station?.IIT}</span>}
+            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 type-body text-muted-foreground">
+              {station?.STID && <span>{station.STID}</span>}
               <span className="inline-flex items-center gap-1.5">
                 <MapPin size={14} /> {displayStationValue(stationLocation)}
               </span>
@@ -1574,8 +1683,8 @@ const lineYAxis = hasSeparateLineAxes
                                         transition-colors
                                         ${
                                           active
-                                            ? "bg-accent/20 text-accent"
-                                            : "hover:bg-secondary"
+                                            ? "bg-primary-light text-primary"
+                                            : "hover:bg-surface-secondary"
                                         }
                                       `}
                                       onClick={() =>
@@ -1585,7 +1694,7 @@ const lineYAxis = hasSeparateLineAxes
                                       <span
                                         className={`size-2 shrink-0 rounded-full ${
                                           active
-                                            ? "bg-accent"
+                                            ? "bg-primary"
                                             : "bg-muted-foreground/30"
                                         }`}
                                       />
@@ -1639,8 +1748,8 @@ const lineYAxis = hasSeparateLineAxes
                             className="
                               flex w-full items-center justify-center gap-2
                               rounded-lg px-3 py-2.5
-                              font-medium text-accent
-                              hover:bg-accent/20
+                              font-medium text-primary
+                              hover:bg-primary-light
                               sm:justify-start
                             "
                             onClick={handleStationSearchToggle}
@@ -1780,10 +1889,10 @@ const lineYAxis = hasSeparateLineAxes
         </p>
       )}
 
-      <section id="realtime" className="scroll-mt-20 space-y-3 md:space-y-4" aria-labelledby="realtime-title">
-        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border pb-3">
+      <section id="realtime" className="dashboard-section scroll-mt-20" aria-labelledby="realtime-title">
+        <div className="dashboard-section-header">
           <div>
-            <h2 id="realtime-title" className="type-card-title font-semibold text-foreground">即時數據</h2>
+            <h2 id="realtime-title" className="type-section-title font-semibold text-foreground">即時數據</h2>
           </div>
           <div className="flex items-center gap-2">
             <span className="type-meta font-semibold text-muted-foreground">資料間隔</span>
@@ -1802,7 +1911,7 @@ const lineYAxis = hasSeparateLineAxes
           <RealtimeUpdateCountdown nextUpdateAt={nextRealtimeUpdateAt} refreshing={realtimeRefreshing} />
         </div>
         {loading && !latest ? (
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3 lg:grid-cols-5">{[1,2,3,4,5].map((item) => <div key={item} className="h-28 animate-pulse rounded-xl border border-border bg-card p-3 md:h-36 md:p-4"><div className="h-3 w-16 rounded bg-secondary" /><div className="mt-4 h-8 w-20 rounded bg-secondary" /></div>)}</div>
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3 lg:grid-cols-5">{[1,2,3,4,5].map((item) => <div key={item} className="h-28 animate-pulse rounded-lg border border-border bg-surface p-3 md:h-32 md:p-4"><div className="h-3 w-16 rounded bg-muted" /><div className="mt-4 h-8 w-20 rounded bg-muted" /></div>)}</div>
         ) : sensorMetrics.length && latest ? (
           <>
             <div className="grid grid-cols-3 gap-2 md:grid-cols-4 md:gap-3 lg:grid-cols-5">
@@ -1815,7 +1924,7 @@ const lineYAxis = hasSeparateLineAxes
                     type="button"
                     aria-pressed={selected}
                     onClick={() => setSelectedSensorValue(item.value)}
-                    className={`min-w-0 rounded-xl border p-3 text-left shadow-sm transition-colors md:p-4 ${selected ? "border-primary bg-primary/5 ring-1 ring-primary/15" : "border-border bg-card hover:border-primary/50"} ${isOddLast ? "col-span-2 md:col-span-1" : ""}`}
+                    className={`min-w-0 rounded-lg border p-3 text-left transition-colors md:p-4 ${selected ? "border-primary bg-primary-light" : "border-border bg-surface hover:bg-surface-secondary"} ${isOddLast ? "col-span-2 md:col-span-1" : ""}`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="flex min-w-0 items-center gap-2 truncate type-meta font-semibold text-muted-foreground">
@@ -1839,7 +1948,7 @@ const lineYAxis = hasSeparateLineAxes
             </div>
 
             {selectedSensor && (
-              <div className="mt-3 overflow-hidden rounded-xl border border-border bg-card shadow-sm md:mt-4">
+              <div className="dashboard-panel mt-3 md:mt-4">
                 <h3 className="px-4 py-3 type-body font-semibold md:px-5 md:py-4">
                   {selectedSensor.name ||
                     selectedSensor.label ||
@@ -1860,7 +1969,7 @@ const lineYAxis = hasSeparateLineAxes
                         }
                         ${
                           rowIndex === 0
-                            ? "bg-secondary/70 font-semibold"
+                            ? "bg-primary-light font-semibold"
                             : "text-muted-foreground"
                         }
                       `}
@@ -1895,7 +2004,7 @@ const lineYAxis = hasSeparateLineAxes
             )}
           </>
         ) : (
-          <div className="rounded-2xl border border-dashed border-border bg-card px-5 py-12 text-center">
+          <div className="dashboard-panel border-dashed bg-surface-secondary px-5 py-10 text-center">
             <Activity className="mx-auto text-muted-foreground" />
             <p className="mt-3 font-semibold text-foreground">目前沒有監測資料</p>
             <p className="mt-1 type-body text-muted-foreground">此測站目前尚未回傳即時感測數值。</p>
@@ -1905,10 +2014,10 @@ const lineYAxis = hasSeparateLineAxes
       </div>
       </section>
 
-      <section id="analysis" className="scroll-mt-24 space-y-4 md:space-y-6" aria-labelledby="analysis-title">
-        <div className="flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-end sm:justify-between">
+      <section id="analysis" className="dashboard-section" aria-labelledby="analysis-title">
+        <div className="dashboard-section-header">
           <div>
-            <h2 id="analysis-title" className="type-card-title font-semibold text-foreground">數據分析</h2>
+            <h2 id="analysis-title" className="type-section-title font-semibold text-foreground">數據分析</h2>
             <p className="mt-1 type-meta text-muted-foreground">針對目前選取的感測項目進行趨勢與分布分析</p>
           </div>
           <div className="flex flex-wrap items-end gap-3">
@@ -1987,13 +2096,14 @@ const lineYAxis = hasSeparateLineAxes
         </BaseDialog>
 
       {history.length ? (
-        <div id="charts" className="scroll-mt-24 space-y-4 md:space-y-6" aria-label="目前感測項目分析圖表">
+        <div id="charts" className="scroll-mt-24 space-y-4" aria-label="目前感測項目分析圖表">
           <BaseCard
+            className="dashboard-chart-card"
             title={`${analysisSensor?.name || analysisSensor?.label || "監測數值"} 趨勢`}
             subtitle={compareMode ? "顯示「圖表設定」中勾選的測項，可開啟設定調整" : "目前只顯示選取的測項；選擇「已選測項」可比較多個測項"}
             headerRight={
               <>
-                <div className="flex gap-1 rounded-xl bg-secondary p-1" role="group" aria-label="趨勢圖顯示測項">
+                <div className="flex gap-1 rounded-lg bg-surface-secondary p-1" role="group" aria-label="趨勢圖顯示測項">
                   <BaseButton className="min-h-11" variant={!compareMode ? "default" : "ghost"} aria-pressed={!compareMode} onClick={() => setCompareMode(false)}>
                     只留單測項
                   </BaseButton>
@@ -2036,8 +2146,9 @@ const lineYAxis = hasSeparateLineAxes
             }}
           />
           <BaseButton className="w-full md:hidden" variant="outline" onClick={() => setMobileDistributionOpen((open) => !open)} aria-expanded={mobileDistributionOpen}>{mobileDistributionOpen ? "收合分布與進階分析" : "查看分布與進階分析"}</BaseButton>
-          <div className={`${mobileDistributionOpen ? "block" : "hidden"} space-y-4 md:block md:space-y-6`}>
+          <div className={`${mobileDistributionOpen ? "block" : "hidden"} space-y-4 md:block`}>
           <BaseCard
+            className="dashboard-chart-card"
             title={`${analysisSensor?.name || analysisSensor?.label || "監測數值"} 資料分布`}
             headerRight={
               <BaseButton variant="outline" onClick={() => setBoxplotSettingsOpen(true)}>
@@ -2061,6 +2172,7 @@ const lineYAxis = hasSeparateLineAxes
           />
           {query.timeType === "T60" && (
             <BaseCard
+              className="dashboard-chart-card"
               title={`${analysisSensor?.name || analysisSensor?.label || "監測數值"} 熱點圖`}
               headerRight={
                 <BaseButton variant="outline" onClick={() => setHeatmapColorsOpen(true)}>
@@ -2088,8 +2200,8 @@ const lineYAxis = hasSeparateLineAxes
             }}
           />
           {hasWind && (
-            <div className="grid gap-6 xl:grid-cols-2">
-              <BaseCard title="風瑰圖">
+            <div className="grid gap-4 xl:grid-cols-2">
+              <BaseCard className="dashboard-chart-card" title="風瑰圖">
                 <Chart options={chartOptions.windrose}>
                   <Exporting 
                     sourceWidth={1200} 
@@ -2098,7 +2210,7 @@ const lineYAxis = hasSeparateLineAxes
                   />
                 </Chart>
               </BaseCard>
-              <BaseCard title="風向風速圖">
+              <BaseCard className="dashboard-chart-card" title="風向風速圖">
                 <Chart options={chartOptions.windbarb}>
                   <Exporting 
                     sourceWidth={1200} 
@@ -2112,7 +2224,7 @@ const lineYAxis = hasSeparateLineAxes
           </div>
         </div>
       ) : (
-        <BaseCard>
+        <BaseCard className="dashboard-chart-card">
           <EmptyState>
             <div>
               <BarChart3 className="mx-auto mb-3 text-primary" />
@@ -2123,7 +2235,7 @@ const lineYAxis = hasSeparateLineAxes
         </BaseCard>
       )}
 
-        <div className="overflow-hidden rounded-xl border border-border bg-card" aria-label="測站資訊">
+        <div className="dashboard-panel" aria-label="測站資訊">
           <div className="flex items-center justify-between gap-4 px-4 py-3 sm:px-5">
             <div className="min-w-0">
               <p className="type-body font-semibold text-foreground">測站資訊</p>
@@ -2146,19 +2258,36 @@ const lineYAxis = hasSeparateLineAxes
         </div>
       </section>
 
-      <section id="reports" className="scroll-mt-24 space-y-4">
-        <div className="flex flex-wrap items-end justify-between gap-3 border-b border-border pb-3">
-          <div><h2 className="type-card-title font-semibold text-foreground">報表</h2><p className="mt-1 type-meta text-muted-foreground">查詢、檢視及匯出歷史監測資料</p></div>
+      <section id="reports" className="dashboard-section">
+        <div className="dashboard-section-header">
+          <div>
+            <h2 className="type-section-title font-semibold text-foreground">報表</h2>
+            <p className="mt-1 type-meta text-muted-foreground">查詢、檢視及匯出歷史監測資料</p>
+          </div>
           <BaseButton className="md:hidden" variant="outline" onClick={() => setMobileReportOpen((open) => !open)} aria-expanded={mobileReportOpen}>{mobileReportOpen ? "收合查詢" : "展開查詢"}</BaseButton>
         </div>
         <div className={mobileReportOpen ? "block" : "hidden md:block"}>
-        <BaseCard
-          title="查詢條件"
-          subtitle="先選報表類型，再設定時間與測項，按「查詢」。結果載入後即可下載 CSV 或 PDF "
-        >
-          <BaseTab value={reportType} onChange={setReportType} items={REPORT_TABS} />
-          <div className="mt-5 rounded-xl border border-border bg-secondary/40 p-4">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+          <div className="dashboard-panel">
+            <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <BaseTab value={reportType} onChange={handleReportTypeChange} items={REPORT_TABS} />
+              <span
+                className={`type-meta font-medium ${
+                  reportRangeInvalid
+                    ? "text-destructive"
+                    : hasPendingReportRange
+                      ? "text-warning"
+                      : "text-muted-foreground"
+                }`}
+              >
+                {reportRangeInvalid
+                  ? "請修正時間"
+                  : hasPendingReportRange
+                    ? "時間尚未套用"
+                    : "時間已套用"}
+              </span>
+            </div>
+
+            <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-[minmax(13rem,1fr)_minmax(13rem,1fr)_auto] xl:items-end">
               <BaseInput
                 type="datetime-local"
                 label="開始時間"
@@ -2171,73 +2300,101 @@ const lineYAxis = hasSeparateLineAxes
                 value={currentReportForm.endTime}
                 onChange={(event) => updateReportForm("endTime", event.target.value)}
               />
-              {reportType === "data" && (
-                <BaseSelect
-                  label="時間類型"
-                  value={isEPA ? "T60" : currentReportForm.timeType}
-                  options={
-                    isEPA
-                      ? DASHBOARD_TIME_TYPES.filter((item) => item.value === "T60")
-                      : DASHBOARD_TIME_TYPES
-                  }
-                  onChange={(timeType) => updateReportForm("timeType", timeType)}
-                  disabled={isEPA}
-                />
+              <BaseButton
+                className="h-11 w-full md:col-span-2 xl:col-span-1 xl:w-auto xl:min-w-36"
+                loading={reportUpdateSource === "range"}
+                onClick={searchReport}
+                disabled={reportRangeInvalid || (
+                  reportType === "daily"
+                    ? !currentReportForm.modelType
+                    : !currentReportForm.modelTypes.length
+                )}
+              >
+                <Search size={16} />
+                查詢
+              </BaseButton>
+              {reportRangeInvalid && (
+                <p role="alert" className="type-meta text-destructive md:col-span-2 xl:col-span-3">
+                  請填寫有效時間，且結束時間不可早於開始時間。
+                </p>
               )}
-              {reportType === "daily" ? (
-                <BaseSelect
-                  label="測項"
-                  value={currentReportForm.modelType}
-                  options={dailyReportModelOptions}
-                  onChange={(modelType) => updateReportForm("modelType", modelType)}
-                  placeholder="選擇測項"
-                />
-              ) : (
-                <BaseMultiSelect
-                  label="測項"
-                  value={currentReportForm.modelTypes}
-                  options={multiReportModelOptions}
-                  onChange={(modelTypes) => updateReportForm("modelTypes", modelTypes)}
-                  placeholder="請選擇一個或多個測項"
-                />
-              )}
-              {reportType === "data" && !isEPA && (
-                <label className="order-last flex min-h-11 items-center gap-3 self-end px-3 py-2 type-body font-medium md:col-span-2 xl:col-span-5">
-                  <input
-                    type="checkbox"
-                    checked={currentReportForm.flagOnly}
-                    onChange={(event) => updateReportForm("flagOnly", event.target.checked)}
-                  />
-                  顯示 Flag 欄位
-                </label>
-              )}
-              <div className="flex items-end">
-                <BaseButton
-                  className="h-11 w-full"
-                  loading={reportLoading}
-                  onClick={searchReport}
-                  disabled={reportRangeInvalid || (
-                    reportType === "daily"
-                      ? !currentReportForm.modelType
-                      : !currentReportForm.modelTypes.length
+            </div>
+
+            <div className="border-t border-border bg-surface-secondary px-4 py-3">
+              <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
+                {reportType === "data" && (
+                  <div className="w-full shrink-0 xl:w-40">
+                    <BaseSelect
+                      label="時間類型"
+                      value={isEPA ? "T60" : currentReportForm.timeType}
+                      options={
+                        isEPA
+                          ? DASHBOARD_TIME_TYPES.filter((item) => item.value === "T60")
+                          : DASHBOARD_TIME_TYPES
+                      }
+                      onChange={(timeType) => updateReportOption("timeType", timeType)}
+                      disabled={isEPA}
+                    />
+                  </div>
+                )}
+                <div className="min-w-0 flex-1">
+                  {reportType === "daily" ? (
+                    <BaseSelect
+                      label="測項（選取後立即更新）"
+                      value={currentReportForm.modelType}
+                      options={dailyReportModelOptions}
+                      onChange={(modelType) => updateReportOption("modelType", modelType)}
+                      placeholder="選擇測項"
+                    />
+                  ) : (
+                    <BaseMultiSelect
+                      label="測項（選取後立即更新）"
+                      value={currentReportForm.modelTypes}
+                      options={multiReportModelOptions}
+                      onChange={(modelTypes) => updateReportOption("modelTypes", modelTypes)}
+                      placeholder="請選擇一個或多個測項"
+                    />
                   )}
-                >
-                  <Search size={16} />
-                  查詢
-                </BaseButton>
+                </div>
+                {reportType === "data" && !isEPA && (
+                  <label className="flex min-h-11 shrink-0 cursor-pointer items-center gap-2 rounded-xl border border-border bg-card px-3 py-2 type-body font-medium">
+                    <input
+                      type="checkbox"
+                      checked={currentReportForm.flagOnly}
+                      onChange={(event) => updateReportOption("flagOnly", event.target.checked)}
+                    />
+                    顯示 Flag 欄位
+                  </label>
+                )}
+                <span className="inline-flex min-h-11 shrink-0 items-center gap-1.5 type-meta font-medium text-primary">
+                  {reportUpdateSource === "options" && (
+                    <RefreshCw size={13} className="animate-spin" aria-hidden="true" />
+                  )}
+                  {reportUpdateSource === "options" ? "更新中…" : "自動更新"}
+                </span>
               </div>
             </div>
           </div>
-        </BaseCard>
         </div>
-          {reportRangeInvalid && (mobileReportOpen || reportRows.length > 0) && <p role="alert" className="type-body text-destructive">請填寫有效時間，且結束時間不可早於開始時間。</p>}
           {reportError && (
             <p className="mt-4 rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 type-body text-destructive ">
               {reportError}
             </p>
           )}
           <div className={mobileReportOpen || reportRows.length > 0 || reportLoading ? "block" : "hidden md:block"}>
-          <BaseCard title="查詢結果" subtitle={`${reportRows.length.toLocaleString()} 筆`} headerRight={reportRows.length > 0 && <><ExportCSVButton data={reportRows} columns={columns} filename={`${activeStation?.STID || "station"}-${reportType}`} /><ExportPDFButton data={reportRows} columns={columns} filename={`${activeStation?.STID || "station"}-${reportType}`} /></>}>
+          <BaseCard
+            className="dashboard-chart-card"
+            title="查詢結果"
+            subtitle={`${reportRows.length.toLocaleString()} 筆 · ${dayjs(currentAppliedReportRange.startTime).format("YYYY/MM/DD HH:mm")} → ${dayjs(currentAppliedReportRange.endTime).format("YYYY/MM/DD HH:mm")}`}
+            headerRight={
+              reportRows.length > 0 && 
+              <>
+                <ExportCSVButton data={reportRows} columns={columns} filename={`${activeStation?.STID || "station"}-${reportType}`} />
+                <ExportExcelButton data={reportRows} columns={columns} filename={`${activeStation?.STID || "station"}-${reportType}`} />
+                <ExportPDFButton data={reportRows} columns={columns} filename={`${activeStation?.STID || "station"}-${reportType}`} />
+              </>
+            }
+          >
             {reportRows.length ? (
               <div className="min-w-0 max-w-full overflow-x-auto"><BaseTable columns={columns} data={reportRows} /></div>
             ) : (
