@@ -330,10 +330,13 @@ function cropImageTo3x4(file) {
         sourceY = (image.height - sourceHeight) / 2;
       }
 
-      const canvas = document.createElement("canvas");
+      // 限制輸出解析度
+      const outputWidth = 1200;
+      const outputHeight = 1600;
 
-      canvas.width = Math.round(sourceWidth);
-      canvas.height = Math.round(sourceHeight);
+      const canvas = document.createElement("canvas");
+      canvas.width = outputWidth;
+      canvas.height = outputHeight;
 
       const context = canvas.getContext("2d");
 
@@ -345,8 +348,8 @@ function cropImageTo3x4(file) {
         sourceHeight,
         0,
         0,
-        canvas.width,
-        canvas.height,
+        outputWidth,
+        outputHeight,
       );
 
       canvas.toBlob(
@@ -354,19 +357,22 @@ function cropImageTo3x4(file) {
           URL.revokeObjectURL(objectUrl);
 
           if (!blob) {
-            reject(new Error("圖片裁切失敗"));
+            reject(new Error("圖片處理失敗"));
             return;
           }
 
+          const fileName =
+            file.name.replace(/\.[^.]+$/, "") + ".jpg";
+
           resolve(
-            new File([blob], file.name, {
-              type: file.type,
-              lastModified: file.lastModified,
+            new File([blob], fileName, {
+              type: "image/jpeg",
+              lastModified: Date.now(),
             }),
           );
         },
-        file.type,
-        1,
+        "image/jpeg",
+        0.8,
       );
     };
 
