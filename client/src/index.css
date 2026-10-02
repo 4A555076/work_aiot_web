@@ -227,6 +227,34 @@
     animation: page-enter 240ms ease-out both;
   }
 
+  .dashboard-page {
+    @apply space-y-6 text-foreground;
+  }
+
+  .dashboard-page-header {
+    @apply relative rounded-xl border border-border bg-surface px-4 py-4 sm:px-5;
+  }
+
+  .dashboard-section {
+    @apply scroll-mt-24 space-y-4;
+  }
+
+  .dashboard-section-header {
+    @apply flex flex-col gap-3 border-b border-border pb-3 sm:flex-row sm:items-end sm:justify-between;
+  }
+
+  .dashboard-panel {
+    @apply overflow-hidden rounded-xl border border-border bg-surface;
+  }
+
+  .dashboard-panel-muted {
+    @apply rounded-lg border border-border bg-surface-secondary;
+  }
+
+  .dashboard-chart-card {
+    @apply rounded-xl shadow-none;
+  }
+
   .scrollbar-subtle {
     scrollbar-color: #b8c4cc transparent;
     scrollbar-width: thin;
@@ -273,16 +301,16 @@
   --border: #d7dfe4;
   --input: #c8d2d8;
   --ring: #0ea5e9;
-  --chart-1: #0ea5e9;
-  --chart-2: #5bbf9a;
-  --chart-3: #7f9fe8;
-  --chart-4: #e6b85c;
-  --chart-5: #e88787;
-  --chart-6: #9b72cf;
-  --chart-7: #2fb8ac;
-  --chart-8: #ed8b4a;
-  --chart-9: #d96c9b;
-  --chart-10: #78909c;
+  --chart-1: #2caffe;
+  --chart-2: #544fc5;
+  --chart-3: #00e272;
+  --chart-4: #fe6a35;
+  --chart-5: #6b8abc;
+  --chart-6: #d568fb;
+  --chart-7: #2ee0ca;
+  --chart-8: #fa4b42;
+  --chart-9: #feb56a;
+  --chart-10: #91e8e1;
   --radius: 0.75rem;
   --radius-card-sm: 8px;
   --radius-card-md: 12px;
