@@ -68,10 +68,11 @@ export default function AlarmOverviewPage() {
       },
     },
     {
-      id: "DisconnDuration",
+      accessorKey: "DisconnDurationText",
       header: "斷線時長",
-      accessorFn: (row) => Number(row.DisconnMinutes ?? 0),
-      cell: ({ row }) => row.original.DisconnDurationText,
+      sortingFn: (rowA, rowB) =>
+        Number(rowA.original.DisconnMinutes ?? 0) -
+        Number(rowB.original.DisconnMinutes ?? 0),
     },
   ];
 
@@ -82,10 +83,11 @@ export default function AlarmOverviewPage() {
     { accessorKey: "ITEM", header: "測項" },
     { accessorKey: "ALARM", header: "異常情形" },
     {
-      id: "TOTALTIME",
+      accessorKey: "TOTALTIME",
       header: "異常時長",
-      accessorFn: (row) => Number(row.TOTALMINUTE ?? 0),
-      cell: ({ row }) => row.original.TOTALTIME,
+      sortingFn: (rowA, rowB) =>
+        Number(rowA.original.TOTALMINUTE ?? 0) -
+        Number(rowB.original.TOTALMINUTE ?? 0),
     },
     { accessorKey: "CHECKTIME", header: "檢查時間" },
   ];
