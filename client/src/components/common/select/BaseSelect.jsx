@@ -31,7 +31,9 @@ export default function BaseSelect({
     const [search, setSearch] = useState("");
 
     const selected = options.find((opt) => opt.value === value);
-    const filteredOptions  = options.filter(opt =>opt.label.includes(search));
+    const filteredOptions = options.filter(opt =>
+        opt.label.toLowerCase().includes(search.toLowerCase())
+    );
 
     return (
         <div className="flex flex-col gap-2 w-full">
