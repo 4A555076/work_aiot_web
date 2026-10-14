@@ -97,6 +97,11 @@ const WIND_DIRECTIONS = [
   "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW",
 ];
 const WEEKDAYS = ["日", "一", "二", "三", "四", "五", "六"];
+const CHART_INTERVAL_MS = {
+  T01: 60 * 1000,
+  T05: 5 * 60 * 1000,
+  T60: 60 * 60 * 1000,
+};
 
 const keyOf = ({ PJID, STID }) => `${PJID}::${STID}`;
 const displayStationValue = (value) => value || "—";
@@ -984,6 +989,38 @@ export default function DashboardPage() {
   const chartOptions = useMemo(() => {
     if (!history.length || !models.length) return {};
 
+    const historyTimestamps = [...new Set(
+      history
+        .map((row) => new Date(row?.Date_Time).getTime())
+        .filter(Number.isFinite),
+    )].sort((left, right) => left - right);
+    const intervalMs = CHART_INTERVAL_MS[isEPA ? "T60" : query.timeType]
+      || CHART_INTERVAL_MS.T01;
+    const lineGapOptions = {
+      connectNulls: false,
+      gapUnit: "value",
+      gapSize: intervalMs * 1.5,
+    };
+    const insertGapBreaks = (points) => {
+      const result = [];
+      let previousTimestamp = null;
+
+      for (const point of points) {
+        const timestamp = Number(point?.[0]);
+        if (
+          Number.isFinite(previousTimestamp)
+          && Number.isFinite(timestamp)
+          && timestamp - previousTimestamp > intervalMs * 1.5
+        ) {
+          result.push([previousTimestamp + intervalMs, null, null]);
+        }
+        result.push(point);
+        if (Number.isFinite(timestamp)) previousTimestamp = timestamp;
+      }
+
+      return result;
+    };
+
     const queryStartTimestamp = dayjs(query.startTime).utc(true).valueOf();
     const queryEndTimestamp = dayjs(query.endTime).utc(true).valueOf();
     const nowTimestamp = dayjs().utc(true).valueOf();
@@ -1038,7 +1075,15 @@ export default function DashboardPage() {
     const windbarb =
       hasWind && Array.isArray(windPoints)
         ? (() => {
-            const wind = windPoints;
+            const windByTimestamp = new Map(
+              windPoints.map((point) => [Number(point[0]), point]),
+            );
+            const windTimeline = historyTimestamps.length
+              ? historyTimestamps.map(
+                  (timestamp) => windByTimestamp.get(timestamp) || [timestamp, null, null],
+                )
+              : windPoints;
+            const wind = insertGapBreaks(windTimeline);
 
             const arrowPoints = wind.map(([x, speed, direction]) => ({
               x,
@@ -1116,6 +1161,7 @@ export default function DashboardPage() {
                   color: "var(--chart-1)",
                   lineWidth: 3,
                   marker: { enabled: false },
+                  ...lineGapOptions,
                 },
                 {
                   type: "line",
@@ -1130,6 +1176,7 @@ export default function DashboardPage() {
                     lineColor: "var(--chart-2)",
                     lineWidth: 1,
                   },
+                  ...lineGapOptions,
                 },
               ],
             };
@@ -1231,10 +1278,21 @@ export default function DashboardPage() {
           })()
         : null;
 
-const seriesFor = (item) =>
-  [...(analysis?.line?.[item.value] || [])].sort(
+const seriesFor = (item) => {
+  const points = [...(analysis?.line?.[item.value] || [])].sort(
     (left, right) => Number(left[0]) - Number(right[0]),
   );
+  if (!historyTimestamps.length) return insertGapBreaks(points);
+
+  const pointsByTimestamp = new Map(
+    points.map((point) => [Number(point[0]), point]),
+  );
+  return insertGapBreaks(
+    historyTimestamps.map(
+      (timestamp) => pointsByTimestamp.get(timestamp) || [timestamp, null],
+    ),
+  );
+};
 
 const visibleLineModels = models
   .map((item, index) => ({ item, index }))
@@ -1378,6 +1436,8 @@ const lineYAxis = hasSeparateLineAxes
         marker: {
           enabled: false,
         },
+
+        ...lineGapOptions,
 
         ...getLineSeriesStyle(lineTypes[item.value]),
       }),
