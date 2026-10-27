@@ -539,7 +539,6 @@ export function useDashboard(selectedStations = []) {
           ...current,
           [result.realtimeType]: result.realtime || [],
         }));
-        setMeta(result);
       } finally {
         refreshing = false;
       }
@@ -578,7 +577,6 @@ export function useDashboard(selectedStations = []) {
     const result = await fetchRealtime({ ...activeStation, type });
     if (!result) return;
 
-    setMeta(result);
     setRealtimeCache((current) => ({
       ...current,
       [type]: result.realtime || [],
