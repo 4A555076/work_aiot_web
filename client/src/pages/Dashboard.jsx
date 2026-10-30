@@ -48,13 +48,37 @@ import GoogleMap from "@/components/common/map/GoogleMap";
 
 dayjs.extend(utc);
 
-Highcharts.SVGRenderer.prototype.symbols.windArrow = (x, y, width, height) => [
-  ["M", x + width / 2, y],
-  ["L", x + width, y + height],
-  ["L", x + width / 2, y + height * 0.72],
-  ["L", x, y + height],
-  ["Z"],
-];
+Highcharts.SVGRenderer.prototype.symbols.windArrow = (
+  x,
+  y,
+  width,
+  height,
+  options = {},
+) => {
+  const centerX = x + width / 2;
+  const centerY = y + height / 2;
+  const radians = (Number(options.windRotation) || 0) * Math.PI / 180;
+  const cos = Math.cos(radians);
+  const sin = Math.sin(radians);
+  const rotate = ([pointX, pointY]) => [
+    centerX + (pointX - centerX) * cos - (pointY - centerY) * sin,
+    centerY + (pointX - centerX) * sin + (pointY - centerY) * cos,
+  ];
+  const [tip, right, notch, left] = [
+    [centerX, y],
+    [x + width, y + height],
+    [centerX, y + height * 0.72],
+    [x, y + height],
+  ].map(rotate);
+
+  return [
+    ["M", ...tip],
+    ["L", ...right],
+    ["L", ...notch],
+    ["L", ...left],
+    ["Z"],
+  ];
+};
 
 const REPORT_TABS = [
   { value: "data", label: "資料表" },
@@ -117,8 +141,43 @@ const getStationInfoTitle = (station) => {
   return values.filter(Boolean).join(separator) || "測站資料未設定";
 };
 
-const windDirectionLabel = (degrees) =>
-  WIND_DIRECTIONS[Math.round((((degrees % 360) + 360) % 360) / 22.5) % 16];
+const normalizeWindDirection = (degrees) => {
+  if (degrees == null || String(degrees).trim() === "") return null;
+
+  const direction = Number(degrees);
+  return Number.isFinite(direction)
+    ? ((direction % 360) + 360) % 360
+    : null;
+};
+const windFlowDirection = (degrees) => {
+  const direction = normalizeWindDirection(degrees);
+  return direction == null ? null : (direction + 180) % 360;
+};
+const getWindArrowSymbol = (degrees) => {
+  const direction = normalizeWindDirection(degrees);
+  if (direction == null) return "windArrow";
+
+  const symbols = Highcharts.SVGRenderer.prototype.symbols;
+  const symbolName = `windArrow-${Math.round(direction * 10)}`;
+
+  if (!symbols[symbolName]) {
+    symbols[symbolName] = (x, y, width, height) => symbols.windArrow(
+      x,
+      y,
+      width,
+      height,
+      { windRotation: direction },
+    );
+  }
+
+  return symbolName;
+};
+const windDirectionLabel = (degrees) => {
+  const direction = normalizeWindDirection(degrees);
+  return direction == null
+    ? "-"
+    : WIND_DIRECTIONS[Math.round(direction / 22.5) % 16];
+};
 const weekdayLabel = (value) => `星期${WEEKDAYS[dayjs.utc(value).day()]}`;
 
 const isCountModel = (model) =>
@@ -571,7 +630,6 @@ export default function DashboardPage() {
   const [selectedSensorValue, setSelectedSensorValue] = useState("");
   const [analysisSensorValue, setAnalysisSensorValue] = useState("");
   const [mobileReportOpen, setMobileReportOpen] = useState(false);
-  const [mobileDistributionOpen, setMobileDistributionOpen] = useState(false);
 
   const [reportType, setReportType] = useState("data");
   const [reportForms, setReportForms] = useState(createDefaultReportForms);
@@ -1067,7 +1125,7 @@ export default function DashboardPage() {
       },
       tooltip: { xDateFormat: "%Y-%m-%d %H:%M %A" },
       plotOptions: { series: { animation: false } },
-      
+
     };
 
     const windPoints = analysis?.wind?.points;
@@ -1085,27 +1143,54 @@ export default function DashboardPage() {
               : windPoints;
             const wind = insertGapBreaks(windTimeline);
 
-            const arrowPoints = wind.map(([x, speed, direction]) => ({
-              x,
-              y: speed,
-              direction,
-              marker: { rotation: direction },
-            }));
+            const arrowPoints = wind.flatMap(([x, speed, direction]) => {
+              const normalizedDirection = normalizeWindDirection(direction);
+              const flowDirection = windFlowDirection(normalizedDirection);
+              const numericSpeed = Number(speed);
+
+              if (
+                !Number.isFinite(Number(x))
+                || !Number.isFinite(numericSpeed)
+                || normalizedDirection == null
+                || flowDirection == null
+              ) {
+                return [];
+              }
+
+              return [{
+                x: Number(x),
+                y: numericSpeed,
+                direction: normalizedDirection,
+                flowDirection,
+                // 氣象角度是來向，箭頭尖端顯示加 180° 後的實際去向。
+                marker: { symbol: getWindArrowSymbol(flowDirection) },
+              }];
+            });
 
             return {
               ...common,
               xAxis: {
                 type: "datetime",
                 ...timeXAxisRange,
-                dateTimeLabelFormats: {
-                  minute: '%H:%M',
-                  hour:   '%H:%M' ,
-                  day:    '%m/%d',
-                  week:   '%m/%d',
-                  month: '%Y-%m',
-                  year:  '%Y'
-                },
                 crosshair: true,
+                startOnTick: false,
+                endOnTick: false,
+                labels: {
+                  rotation: 0,
+                  align: "center",
+                  step: 1,
+                  formatter: function () {
+                    const time = this.axis.chart.time;
+                    const value = Number(this.value);
+                    const currentTime = time.dateFormat("%H:%M", value);
+
+                    if (currentTime === "00:00") {
+                      return time.dateFormat("%m/%d", value);
+                    }
+
+                    return currentTime;
+                  },
+                },
               },
               yAxis: {
                 title: {
@@ -1168,6 +1253,27 @@ export default function DashboardPage() {
                   name: "風向",
                   data: arrowPoints,
                   color: "var(--chart-1)",
+                  events: {
+                    afterRender() {
+                      this.points.forEach((point) => {
+                        const symbolName = point.options.marker?.symbol;
+                        const graphic = point.graphic;
+
+                        if (!graphic || !symbolName) return;
+
+                        graphic.symbolName = symbolName;
+
+                        graphic.attr({
+                          d: Highcharts.SVGRenderer.prototype.symbols[symbolName](
+                            graphic.x,
+                            graphic.y,
+                            graphic.width,
+                            graphic.height,
+                          ),
+                        });
+                      });
+                    },
+                  },
                   marker: {
                     enabled: true,
                     symbol: "windArrow",
@@ -1175,6 +1281,9 @@ export default function DashboardPage() {
                     fillColor: "var(--chart-2)",
                     lineColor: "var(--chart-2)",
                     lineWidth: 1,
+                    states: {
+                      hover: { enabled: false },
+                    },
                   },
                   ...lineGapOptions,
                 },
@@ -1608,10 +1717,11 @@ const lineYAxis = hasSeparateLineAxes
   }
 
   return (
-    <main className="dashboard-page highcharts-light">
-      <header className="dashboard-page-header">
+    <main className="highcharts-light mx-auto flex w-full min-w-0 max-w-screen-2xl flex-col gap-8 text-foreground lg:gap-12">
+      <header className="rounded-2xl bg-primary/10 p-5 sm:p-7">
         <div className="flex flex-col gap-3 sm:gap-5 lg:flex-row lg:items-center lg:justify-between">
           <div className="min-w-0">
+            <p className="mb-3 flex items-center gap-2 text-xs font-semibold tracking-wide text-primary-hover"><Activity size={14} aria-hidden="true" />環境監測中心</p>
             <h1 className="type-page-title wrap-break-word font-semibold tracking-tight text-foreground">
               {isEPA ? station?.STID : station?.IIT}
               <span className="mx-2 font-normal text-muted-foreground">·</span>
@@ -1938,10 +2048,28 @@ const lineYAxis = hasSeparateLineAxes
               <ClipboardCheck size={15} /> 巡檢
             </BaseButton>
            )}
-            
+
           </div>
         </div>
       </header>
+
+      {/* <nav className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:flex lg:flex-wrap" aria-label="儀表板區塊">
+        {[
+          { href: "#realtime", label: "即時數據", icon: Activity },
+          { href: "#charts", label: "趨勢", icon: BarChart3 },
+          { href: "#distribution", label: "盒鬚圖", icon: SlidersHorizontal },
+          ...(hasWind && history.length > 0 ? [
+            { href: "#windrose", label: "風瑰圖", icon: Wind },
+            { href: "#windbarb", label: "風向風速圖", icon: Wind },
+          ] : []),
+          { href: "#reports", label: "報表", icon: ClipboardCheck },
+        ].map(({ href, label, icon: Icon }) => (
+          <a key={href} href={href} className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-surface px-4 py-3 text-sm font-semibold text-muted-foreground hover:bg-primary-light hover:text-foreground focus-visible:outline-2 focus-visible:outline-primary lg:flex-1">
+            <Icon size={16} className="shrink-0" aria-hidden="true" />
+            {label}
+          </a>
+        ))}
+      </nav> */}
 
       {error && (
         <p className="rounded-xl border border-destructive/20 bg-destructive/10 px-4 py-3 type-body text-destructive ">
@@ -1949,8 +2077,8 @@ const lineYAxis = hasSeparateLineAxes
         </p>
       )}
 
-      <section id="realtime" className="dashboard-section scroll-mt-20" aria-labelledby="realtime-title">
-        <div className="dashboard-section-header">
+      <section id="realtime" className="min-w-0 scroll-mt-20 space-y-5 sm:space-y-6" aria-labelledby="realtime-title">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between pb-4 border-b border-border">
           <div>
             <h2 id="realtime-title" className="type-section-title font-semibold text-foreground">即時數據</h2>
           </div>
@@ -1971,20 +2099,19 @@ const lineYAxis = hasSeparateLineAxes
           <RealtimeUpdateCountdown nextUpdateAt={nextRealtimeUpdateAt} refreshing={realtimeRefreshing} />
         </div>
         {loading && !latest ? (
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-3 md:gap-3 lg:grid-cols-5">{[1,2,3,4,5].map((item) => <div key={item} className="h-28 animate-pulse rounded-lg border border-border bg-surface p-3 md:h-32 md:p-4"><div className="h-3 w-16 rounded bg-muted" /><div className="mt-4 h-8 w-20 rounded bg-muted" /></div>)}</div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 xl:grid-cols-5">{[1,2,3,4,5].map((item) => <div key={item} className="h-28 animate-pulse rounded-lg border border-border bg-surface p-3 md:h-32 md:p-4"><div className="h-3 w-16 rounded bg-muted" /><div className="mt-4 h-8 w-20 rounded bg-muted" /></div>)}</div>
         ) : sensorMetrics.length && latest ? (
           <>
-            <div className="grid grid-cols-3 gap-2 md:grid-cols-4 md:gap-3 lg:grid-cols-5">
-              {sensorMetrics.map((item, index) => {
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 xl:grid-cols-5">
+              {sensorMetrics.map((item) => {
                 const selected = selectedSensor?.value === item.value;
-                const isOddLast = sensorMetrics.length % 2 === 1 && index === sensorMetrics.length - 1;
                 return (
                   <button
                     key={item.value}
                     type="button"
                     aria-pressed={selected}
                     onClick={() => setSelectedSensorValue(item.value)}
-                    className={`min-w-0 rounded-lg border p-3 text-left transition-colors md:p-4 ${selected ? "border-primary bg-primary-light" : "border-border bg-surface hover:bg-surface-secondary"} ${isOddLast ? "col-span-2 md:col-span-1" : ""}`}
+                    className={`min-w-0 rounded-2xl border-0 p-4 text-left transition-colors sm:p-5 motion-reduce:transition-none ${selected ? "bg-primary-light" : "bg-surface hover:bg-primary/10"}`}
                   >
                     <div className="flex items-center justify-between gap-2">
                       <p className="flex min-w-0 items-center gap-2 truncate type-meta font-semibold text-muted-foreground">
@@ -2008,7 +2135,7 @@ const lineYAxis = hasSeparateLineAxes
             </div>
 
             {selectedSensor && (
-              <div className="dashboard-panel mt-3 md:mt-4">
+              <div className="overflow-hidden rounded-2xl border-0 bg-surface shadow-none mt-5 sm:mt-6">
                 <h3 className="px-4 py-3 type-body font-semibold md:px-5 md:py-4">
                   {selectedSensor.name ||
                     selectedSensor.label ||
@@ -2064,7 +2191,7 @@ const lineYAxis = hasSeparateLineAxes
             )}
           </>
         ) : (
-          <div className="dashboard-panel border-dashed bg-surface-secondary px-5 py-10 text-center">
+          <div className="overflow-hidden rounded-2xl border-0 bg-surface shadow-none border-dashed px-5 py-10 text-center">
             <Activity className="mx-auto text-muted-foreground" />
             <p className="mt-3 font-semibold text-foreground">目前沒有監測資料</p>
             <p className="mt-1 type-body text-muted-foreground">此測站目前尚未回傳即時感測數值。</p>
@@ -2074,14 +2201,15 @@ const lineYAxis = hasSeparateLineAxes
       </div>
       </section>
 
-      <section id="analysis" className="dashboard-section" aria-labelledby="analysis-title">
-        <div className="dashboard-section-header">
+      <section id="analysis" className="scroll-mt-8 space-y-4 min-w-0 sm:space-y-6" aria-labelledby="analysis-title">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between pb-4 border-b border-border">
           <div>
             <h2 id="analysis-title" className="type-section-title font-semibold text-foreground">數據分析</h2>
             <p className="mt-1 type-meta text-muted-foreground">針對目前選取的感測項目進行趨勢與分布分析</p>
           </div>
         </div>
-        <div className="dashboard-panel overflow-hidden" aria-labelledby="analysis-controls-title">
+        <div className="grid min-w-0 grid-cols-1 items-start gap-6 lg:gap-8">
+        <div className="min-w-0 overflow-hidden rounded-2xl bg-primary/5" aria-labelledby="analysis-controls-title">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-secondary/30 px-4 py-4 sm:px-5">
             <div className="flex items-center gap-3">
               <span className="rounded-xl bg-primary/10 p-2.5 text-primary"><SlidersHorizontal size={20} aria-hidden="true" /></span>
@@ -2094,7 +2222,7 @@ const lineYAxis = hasSeparateLineAxes
               {history.length.toLocaleString()} 筆資料 · {models.length} 個測項
             </span>
           </div>
-          <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-4">
+          <div className="grid min-w-0 grid-cols-1 gap-5 p-5 sm:grid-cols-2 sm:p-6 xl:grid-cols-4">
             <div className="sm:col-span-2 xl:col-span-4">
               <BaseSelect label="分析測項" value={analysisTargetValue || ""} options={realtimeModels} onChange={setAnalysisSensorValue} placeholder="請選擇分析測項" />
             </div>
@@ -2125,7 +2253,7 @@ const lineYAxis = hasSeparateLineAxes
               onChange={(timeType) => setDashboardQuery((value) => ({ ...value, timeType }))}
               disabled={isEPA}
             />
-            <div className="flex items-end">
+            <div className="flex items-end sm:col-span-2 xl:col-span-1">
               <BaseButton
                 className="h-11 w-full"
                 loading={querying}
@@ -2137,7 +2265,7 @@ const lineYAxis = hasSeparateLineAxes
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3 type-meta sm:px-5">
-            <span className="rounded-full bg-secondary px-3 py-1.5 text-muted-foreground">
+            <span className="max-w-full rounded-xl bg-secondary px-3 py-2 leading-relaxed text-muted-foreground">
               {dayjs(query.startTime).format("YYYY/MM/DD HH:mm")} →{" "}
               {dayjs(query.endTime).format("YYYY/MM/DD HH:mm")}
             </span>
@@ -2154,14 +2282,14 @@ const lineYAxis = hasSeparateLineAxes
         </div>
 
       {history.length ? (
-        <div id="charts" className="scroll-mt-24 space-y-4" aria-label="目前感測項目分析圖表">
+        <div id="charts" className="min-w-0 scroll-mt-24 space-y-5 sm:space-y-6" aria-label="目前感測項目分析圖表">
           <BaseCard
-            className="dashboard-chart-card"
+            className="rounded-2xl border-0 bg-surface shadow-none min-w-0"
             title={`${analysisSensor?.name || analysisSensor?.label || "監測數值"} 趨勢`}
             subtitle={compareMode ? "顯示「圖表設定」中勾選的測項，可開啟設定調整" : "目前只顯示選取的測項；選擇「已選測項」可比較多個測項"}
             headerRight={
               <>
-                <div className="flex gap-1 rounded-lg bg-surface-secondary p-1" role="group" aria-label="趨勢圖顯示測項">
+                <div className="flex flex-wrap gap-1 rounded-lg bg-surface-secondary p-1" role="group" aria-label="趨勢圖顯示測項">
                   <BaseButton className="min-h-11" variant={!compareMode ? "default" : "ghost"} aria-pressed={!compareMode} onClick={() => setCompareMode(false)}>
                     只留單測項
                   </BaseButton>
@@ -2176,10 +2304,10 @@ const lineYAxis = hasSeparateLineAxes
             }
           >
             <Chart options={chartOptions.line}>
-              <Exporting 
-                sourceWidth={1200} 
-                sourceHeight={800} 
-                scale={2} 
+              <Exporting
+                sourceWidth={1200}
+                sourceHeight={800}
+                scale={2}
               />
             </Chart>
           </BaseCard>
@@ -2203,11 +2331,10 @@ const lineYAxis = hasSeparateLineAxes
               setLineChartLayout(chartLayout);
             }}
           />
-          <BaseButton className="w-full md:hidden" variant="outline" onClick={() => setMobileDistributionOpen((open) => !open)} aria-expanded={mobileDistributionOpen}>{mobileDistributionOpen ? "收合分布與進階分析" : "查看分布與進階分析"}</BaseButton>
-          <div className={`${mobileDistributionOpen ? "block" : "hidden"} space-y-4 md:block`}>
+          <div id="distribution" className="scroll-mt-8 space-y-5 sm:space-y-6">
           <BaseCard
-            className="dashboard-chart-card"
-            title={`${analysisSensor?.name || analysisSensor?.label || "監測數值"} 資料分布`}
+            className="rounded-2xl border-0 bg-surface shadow-none min-w-0"
+            title={`${analysisSensor?.name || analysisSensor?.label || "監測數值"} 盒鬚圖`}
             headerRight={
               <BaseButton variant="outline" onClick={() => setBoxplotSettingsOpen(true)}>
                 <SlidersHorizontal size={16}/> 設定
@@ -2215,10 +2342,10 @@ const lineYAxis = hasSeparateLineAxes
             }
           >
             <Chart options={chartOptions.boxplot}>
-              <Exporting 
-                sourceWidth={1200} 
-                sourceHeight={800} 
-                scale={2} 
+              <Exporting
+                sourceWidth={1200}
+                sourceHeight={800}
+                scale={2}
               />
             </Chart>
           </BaseCard>
@@ -2230,7 +2357,7 @@ const lineYAxis = hasSeparateLineAxes
           />
           {query.timeType === "T60" && (
             <BaseCard
-              className="dashboard-chart-card"
+              className="rounded-2xl border-0 bg-surface shadow-none min-w-0"
               title={`${analysisSensor?.name || analysisSensor?.label || "監測數值"} 熱點圖`}
               headerRight={
                 <BaseButton variant="outline" onClick={() => setHeatmapColorsOpen(true)}>
@@ -2239,10 +2366,10 @@ const lineYAxis = hasSeparateLineAxes
               }
             >
               <Chart options={chartOptions.heatmap}>
-                <Exporting 
-                  sourceWidth={1200} 
-                  sourceHeight={800} 
-                  scale={2} 
+                <Exporting
+                  sourceWidth={1200}
+                  sourceHeight={800}
+                  scale={2}
                 />
               </Chart>
             </BaseCard>
@@ -2258,31 +2385,41 @@ const lineYAxis = hasSeparateLineAxes
             }}
           />
           {hasWind && (
-            <div className="grid gap-4 xl:grid-cols-2">
-              <BaseCard className="dashboard-chart-card" title="風瑰圖">
+            <div className="space-y-5 sm:space-y-6">
+              <div id="windrose" className="scroll-mt-8">
+              <BaseCard
+                className="rounded-2xl border-0 bg-surface shadow-none min-w-0"
+                title="風瑰圖"
+              >
                 <Chart options={chartOptions.windrose}>
-                  <Exporting 
-                    sourceWidth={1200} 
-                    sourceHeight={800} 
-                    scale={2} 
+                  <Exporting
+                    sourceWidth={1200}
+                    sourceHeight={800}
+                    scale={2}
                   />
                 </Chart>
               </BaseCard>
-              <BaseCard className="dashboard-chart-card" title="風向風速圖">
+              </div>
+              <div id="windbarb" className="scroll-mt-8">
+              <BaseCard
+                className="rounded-2xl border-0 bg-surface shadow-none min-w-0"
+                title="風向風速圖"
+              >
                 <Chart options={chartOptions.windbarb}>
-                  <Exporting 
-                    sourceWidth={1200} 
-                    sourceHeight={800} 
-                    scale={2} 
+                  <Exporting
+                    sourceWidth={1200}
+                    sourceHeight={800}
+                    scale={2}
                   />
                 </Chart>
               </BaseCard>
+              </div>
             </div>
           )}
           </div>
         </div>
       ) : (
-        <BaseCard className="dashboard-chart-card">
+        <BaseCard className="rounded-2xl border-0 bg-surface shadow-none min-w-0">
           <EmptyState>
             <div>
               <BarChart3 className="mx-auto mb-3 text-primary" />
@@ -2293,7 +2430,9 @@ const lineYAxis = hasSeparateLineAxes
         </BaseCard>
       )}
 
-        <div className="dashboard-panel" aria-label="測站資訊">
+        </div>
+
+        <div className="overflow-hidden rounded-2xl border-0 bg-surface shadow-none" aria-label="測站資訊">
           <div className="flex items-center justify-between gap-4 px-4 py-3 sm:px-5">
             <div className="min-w-0">
               <p className="type-body font-semibold text-foreground">測站資訊</p>
@@ -2316,8 +2455,8 @@ const lineYAxis = hasSeparateLineAxes
         </div>
       </section>
 
-      <section id="reports" className="dashboard-section">
-        <div className="dashboard-section-header">
+      <section id="reports" className="min-w-0 scroll-mt-8 space-y-5 rounded-2xl bg-accent/5 p-4 sm:space-y-6 sm:p-6 lg:p-8">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between pb-4 border-b border-border">
           <div>
             <h2 className="type-section-title font-semibold text-foreground">報表</h2>
             <p className="mt-1 type-meta text-muted-foreground">查詢、檢視及匯出歷史監測資料</p>
@@ -2325,7 +2464,7 @@ const lineYAxis = hasSeparateLineAxes
           <BaseButton className="md:hidden" variant="outline" onClick={() => setMobileReportOpen((open) => !open)} aria-expanded={mobileReportOpen}>{mobileReportOpen ? "收合查詢" : "展開查詢"}</BaseButton>
         </div>
         <div className={mobileReportOpen ? "block" : "hidden md:block"}>
-          <div className="dashboard-panel">
+          <div className="overflow-hidden rounded-2xl border-0 bg-surface shadow-none">
             <div className="flex flex-col gap-2 border-b border-border px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <BaseTab value={reportType} onChange={handleReportTypeChange} items={REPORT_TABS} />
               <span
@@ -2345,7 +2484,7 @@ const lineYAxis = hasSeparateLineAxes
               </span>
             </div>
 
-            <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-[minmax(13rem,1fr)_minmax(13rem,1fr)_auto] xl:items-end">
+            <div className="grid min-w-0 gap-5 p-4 sm:p-6 md:grid-cols-2 xl:grid-cols-3 xl:items-end">
               <BaseInput
                 type="datetime-local"
                 label="開始時間"
@@ -2378,7 +2517,7 @@ const lineYAxis = hasSeparateLineAxes
               )}
             </div>
 
-            <div className="border-t border-border bg-surface-secondary px-4 py-3">
+            <div className="border-t border-border bg-surface-secondary px-4 py-4 sm:px-6 sm:py-5">
               <div className="flex flex-col gap-3 xl:flex-row xl:items-end">
                 {reportType === "data" && (
                   <div className="w-full shrink-0 xl:w-40">
@@ -2441,11 +2580,11 @@ const lineYAxis = hasSeparateLineAxes
           )}
           <div className={mobileReportOpen || reportRows.length > 0 || reportLoading ? "block" : "hidden md:block"}>
           <BaseCard
-            className="dashboard-chart-card"
+            className="rounded-2xl border-0 bg-surface shadow-none min-w-0"
             title="查詢結果"
             subtitle={`${reportRows.length.toLocaleString()} 筆 · ${dayjs(currentAppliedReportRange.startTime).format("YYYY/MM/DD HH:mm")} → ${dayjs(currentAppliedReportRange.endTime).format("YYYY/MM/DD HH:mm")}`}
             headerRight={
-              reportRows.length > 0 && 
+              reportRows.length > 0 &&
               <>
                 <ExportCSVButton data={reportRows} columns={columns} filename={`${activeStation?.STID || "station"}-${reportType}`} />
                 <ExportExcelButton data={reportRows} columns={columns} filename={`${activeStation?.STID || "station"}-${reportType}`} />
