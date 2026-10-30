@@ -567,7 +567,7 @@ export default function DashboardPage() {
   const [heatmapColorsOpen, setHeatmapColorsOpen] = useState(false);
   const [heatmapColors, setHeatmapColors] = useState(["#3060cf", "#fffbbc", "#c4463a", "#c4463a"]);
   const [heatmapStops, setHeatmapStops] = useState(["0", "0.5", "0.9", "1"]);
-  const [analysisControlsOpen, setAnalysisControlsOpen] = useState(false);
+
   const [selectedSensorValue, setSelectedSensorValue] = useState("");
   const [analysisSensorValue, setAnalysisSensorValue] = useState("");
   const [mobileReportOpen, setMobileReportOpen] = useState(false);
@@ -870,7 +870,7 @@ export default function DashboardPage() {
 
   const updateAnalysisCharts = async () => {
     await searchDashboard(boxplotSettings);
-    setAnalysisControlsOpen(false);
+
   };
 
   const executeReportSearch = useCallback(async (targetReportType, form, source) => {
@@ -2080,26 +2080,24 @@ const lineYAxis = hasSeparateLineAxes
             <h2 id="analysis-title" className="type-section-title font-semibold text-foreground">數據分析</h2>
             <p className="mt-1 type-meta text-muted-foreground">針對目前選取的感測項目進行趨勢與分布分析</p>
           </div>
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="w-full min-w-0 sm:w-64">
-              <BaseSelect label="分析測項" value={analysisTargetValue || ""} options={realtimeModels} onChange={setAnalysisSensorValue} placeholder="請選擇分析測項" />
-            </div>
-            <BaseButton variant="outline" onClick={() => setAnalysisControlsOpen(true)}><SlidersHorizontal size={15} />分析條件</BaseButton>
-          </div>
         </div>
-        <BaseDialog
-          open={analysisControlsOpen}
-          onOpenChange={setAnalysisControlsOpen}
-          hideFooter
-          title="時間範圍與分析條件"
-          description="設定分析時間與資料間隔，再更新圖表。"
-        >
-          <div className="mb-4 text-right">
-            <span className="type-meta tabular-nums text-muted-foreground">
-              {history.length.toLocaleString()} 筆 · {models.length} 項
+        <div className="dashboard-panel overflow-hidden" aria-labelledby="analysis-controls-title">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-secondary/30 px-4 py-4 sm:px-5">
+            <div className="flex items-center gap-3">
+              <span className="rounded-xl bg-primary/10 p-2.5 text-primary"><SlidersHorizontal size={20} aria-hidden="true" /></span>
+              <div>
+                <h3 id="analysis-controls-title" className="type-body font-semibold text-foreground">分析條件</h3>
+                <p className="mt-1 type-meta text-muted-foreground">選擇測項與時間範圍，再更新下方圖表</p>
+              </div>
+            </div>
+            <span className="rounded-full border border-border bg-card px-3 py-1.5 type-meta tabular-nums text-muted-foreground">
+              {history.length.toLocaleString()} 筆資料 · {models.length} 個測項
             </span>
           </div>
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-4">
+            <div className="sm:col-span-2 xl:col-span-4">
+              <BaseSelect label="分析測項" value={analysisTargetValue || ""} options={realtimeModels} onChange={setAnalysisSensorValue} placeholder="請選擇分析測項" />
+            </div>
             <BaseInput
               type="datetime-local"
               label="開始時間"
@@ -2138,7 +2136,7 @@ const lineYAxis = hasSeparateLineAxes
               </BaseButton>
             </div>
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2 type-meta ">
+          <div className="flex flex-wrap items-center gap-3 border-t border-border px-4 py-3 type-meta sm:px-5">
             <span className="rounded-full bg-secondary px-3 py-1.5 text-muted-foreground">
               {dayjs(query.startTime).format("YYYY/MM/DD HH:mm")} →{" "}
               {dayjs(query.endTime).format("YYYY/MM/DD HH:mm")}
@@ -2153,7 +2151,7 @@ const lineYAxis = hasSeparateLineAxes
               </span>
             )}
           </div>
-        </BaseDialog>
+        </div>
 
       {history.length ? (
         <div id="charts" className="scroll-mt-24 space-y-4" aria-label="目前感測項目分析圖表">
