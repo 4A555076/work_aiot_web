@@ -1,4 +1,6 @@
 const express = require('express');
+const swaggerUi = require("swagger-ui-express");
+const swaggerSpec = require("./config/swagger");
 const cors = require('cors');
 const app = express();
 const router = express.Router();
@@ -26,6 +28,7 @@ app.use('/aiot', stationRoutes);
 app.use('/aiot', openDataRoutes);
 app.use('/aiot', chartRoutes);
 
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 router.get('/*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
