@@ -1,40 +1,57 @@
 const jwt = require('jsonwebtoken');
-require('dotenv').config();
 
-function verifyToken(req, res, next) { 
+function verifyToken(req, res, next) {
+  const authorization = req.get('Authorization');
+  const match = /^Bearer ([^\s]+)$/i.exec(authorization || '');
+
+  if (!match) {
+    return res.status(401).json({
+      success: false,
+      message: 'No token provided',
+    });
+  }
+
   try {
-    const tokenHeader = req.header('Authorization');
-    if (!tokenHeader || !tokenHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ success: false, message: 'No token provided' }); // Token 未提供
+    const decoded = jwt.verify(
+      match[1],
+      process.env.JWT_TOKEN,
+      {
+        algorithms: ['HS256'],
+        issuer: 'aiot-api',
+        audience: 'aiot-web',
+      },
+    );
+
+    // 檢查使用者資訊及角色是否合法
+    if (
+      typeof decoded.ID !== 'string' ||
+      decoded.ID.length === 0 ||
+      !['ERP', 'AIOT'].includes(decoded.role)
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid token',
+      });
     }
 
-    const token = tokenHeader.split(' ')[1];
+    req.user = {
+      ID: decoded.ID,
+      name: typeof decoded.name === 'string' ? decoded.name : '',
+      role: decoded.role,
+    };
 
-    jwt.verify(token, process.env.JWT_TOKEN, (err, decoded) => {
-      if (err) {
-        const message = 
-          err.name === 'TokenExpiredError' 
-            ? 'Token expired'  // Token 過期
-            : 'Invalid token'; // Token 無效或被篡改
-        return res.status(401).json({ success: false, message });
-      }
-
-      if (decoded.payload) {
-        req.user = decoded.payload; // 存入請求對象供後續使用
-      } else if (decoded.ID && decoded.PWD) {
-        const { ID, PWD } = decoded;
-        req.user = { ID };
-        req.body = { ...req.body, ID, PWD }; // 保留原 request body 並支援舊版 autologin token
-      } else {
-        return res.status(401).json({ success: false, message: 'Invalid token payload' }); // Token 解碼內容無效
-      }
-
-      next();
-    });
-
+    return next();
   } catch (error) {
-    return res.status(500).json({ success: false, message: 'Internal server error' }); //伺服器錯誤
+    const message =
+      error.name === 'TokenExpiredError'
+        ? 'Token expired'
+        : 'Invalid token';
+
+    return res.status(401).json({
+      success: false,
+      message,
+    });
   }
-};
+}
 
 module.exports = { verifyToken };
