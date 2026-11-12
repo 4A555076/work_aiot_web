@@ -158,7 +158,30 @@ router.post('/fire/projects', verifyToken, async (req, res) => {
  *                   type: array
  *                   items:
  *                     type: object
- *                     description: 火災紀錄
+ *                     properties:
+ *                       SN:
+ *                         type: string
+ *                       ENID:
+ *                         type: string
+ *                       Ack:
+ *                         type: number
+ *                       Event:
+ *                         type: string
+ *                       WGS84:
+ *                         type: string
+ *                       district:
+ *                         type: string
+ *                       detail:
+ *                         type: string
+ *                       status:
+ *                         type: string
+ *                       squadCount:
+ *                         type: number
+ *                       updateTime:
+ *                         type: string
+ *                       durationMinute:
+ *                         type: string
+ *                        
  *       '400':
  *         description: 請求參數錯誤
  *       '401':
