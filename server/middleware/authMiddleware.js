@@ -7,7 +7,7 @@ function verifyToken(req, res, next) {
   if (!match) {
     return res.status(401).json({
       success: false,
-      message: 'No token provided',
+      message: 'Unauthorized',
     });
   }
 
@@ -30,7 +30,7 @@ function verifyToken(req, res, next) {
     ) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid token',
+        message: 'Unauthorized',
       });
     }
 
@@ -45,7 +45,7 @@ function verifyToken(req, res, next) {
     const message =
       error.name === 'TokenExpiredError'
         ? 'Token expired'
-        : 'Invalid token';
+        : 'Unauthorized';
 
     return res.status(401).json({
       success: false,

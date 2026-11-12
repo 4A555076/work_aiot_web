@@ -200,7 +200,7 @@ router.post('/fire/reports', verifyToken, async (req, res) => {
   )) {
     return res.status(400).json({
       success: false,
-      message: '請求格式錯誤',
+      message: 'Bad request',
     });
   }
 
@@ -257,7 +257,7 @@ try {
     if (!hasPermission) {
       return res.status(403).json({
         success: false,
-        message: 'Permission denied',
+        message: 'Forbidden',
       });
     }
 

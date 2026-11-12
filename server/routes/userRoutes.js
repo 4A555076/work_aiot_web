@@ -12,19 +12,75 @@ const {
 
 const { publicKey } = cryptoGenerateRSAKeyPair();
 
-// 登入
+
+/**
+ * @swagger
+ * /aiot/user/login:
+ *   post:
+ *     tags:
+ *       - User
+ *     summary: 登入
+ *     security: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - ID
+ *               - PWD
+ *             properties:
+ *               ID:
+ *                 type: string
+ *                 description: 使用者帳號
+ *                 example: "user001"
+ *               PWD:
+ *                 type: string
+ *                 format: password
+ *                 description: 使用者密碼
+ *     responses:
+ *       '200':
+ *         description: 登入成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ID:
+ *                   type: string
+ *                 token:
+ *                   type: string
+ *                 name:
+ *                   type: string
+ *       '400':
+ *         description: 請求參數錯誤
+ *       '401':
+ *         description: 帳號或密碼錯誤
+ *       '500':
+ *         description: 伺服器錯誤
+ */
+
+/**
+ * TODO: 登入 API 安全性強化
+ * 1. 強化密碼雜湊演算法及 JWT 金鑰管理，確保敏感資訊安全。
+ * 2. 加入登入速率限制與帳號權限驗證，防止暴力破解及未授權存取。
+ */
 router.post('/user/login', async (req, res) => {
   const { ID, PWD } = req.body;
 
-  if (!ID || !PWD) {
+  if (![ID, PWD].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'ID 與密碼為必填欄位。',
+      message: '請求參數錯誤',
     });
   }
 
   try {
     const webAiotDb = await getConnection('WebAIOT');
+    const hashedPWD = cryptoHashText(PWD, { uppercase: true });
 
     const query = `
       SELECT
@@ -38,30 +94,13 @@ router.post('/user/login', async (req, res) => {
     const result = await webAiotDb
       .request()
       .input('ID', sql.VarChar, ID)
-      .input('PWD', sql.VarChar, cryptoHashText(PWD, { uppercase: true }))
+      .input('PWD', sql.VarChar, hashedPWD)
       .query(query);
 
-    if (result.recordset.length > 0) {
-      const payload = {
-        ID: result.recordset[0].ID,
-        name: result.recordset[0].CNAME,
-        role: 'ERP',
-      };
+    let user = result.recordset[0];
+    let role = 'ERP';
 
-      const token = jwt.sign(
-        { payload, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 },
-        process.env.JWT_TOKEN,
-      );
-
-      res.status(200).json({
-        ID: cryptoEncryptText(result.recordset[0].ID, publicKey),
-        token,
-        name: result.recordset[0].CNAME,
-      });
-
-    } else {
-      const webAiotDb = await getConnection('WebAIOT');
-
+    if (!user) {
       const query2 = `
         SELECT
           [CNAME],
@@ -75,139 +114,183 @@ router.post('/user/login', async (req, res) => {
       const result2 = await webAiotDb
         .request()
         .input('ID', sql.VarChar, ID)
-        .input('PWD', sql.VarChar, cryptoHashText(PWD, { uppercase: true }))
+        .input('PWD', sql.VarChar, hashedPWD)
         .query(query2);
 
-      if (result2.recordset.length > 0) {
-        const payload = {
-          ID: result2.recordset[0].ID,
-          name: result2.recordset[0].CNAME,
-          role: 'AIOT',
-        };
+      user = result2.recordset[0];
+      role = 'AIOT';
+    } 
 
-        const token = jwt.sign(
-          { payload, exp: Math.floor(Date.now() / 1000) + 60 * 60 },
-          process.env.JWT_TOKEN,
-        );
-
-        res.status(200).json({
-          ID: cryptoEncryptText(result2.recordset[0].ID, publicKey),
-          token,
-          name: result2.recordset[0].CNAME,
-        });
-
-      } else {
-        res.status(401).json({ 
-          success: false, 
-          message: 'Invalid credentials' 
-        });
-      }
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
     }
+
+    const token = jwt.sign(
+      {
+        ID: user.ID,
+        name: user.CNAME,
+        role,
+      },
+      process.env.JWT_TOKEN,
+      {
+        algorithm: 'HS256',
+        issuer: 'aiot-api',
+        audience: 'aiot-web',
+        expiresIn: '1h',
+      },
+    );
+
+    return res.status(200).json({
+      ID: cryptoEncryptText(user.ID, publicKey),
+      token,
+      name: user.CNAME,
+    });
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
-    res.status(500).json({
+
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
 
-// 自動登入
+/**
+ * @swagger
+ * /aiot/user/autologin:
+ *   post:
+ *     tags:
+ *       - User
+ *     summary: 使用者驗證自動登入
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: 登入成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 ID:
+ *                   type: string
+ *                 token:
+ *                   type: string
+ *                 name:
+ *                   type: string
+ *       '401':
+ *         description: 帳號或密碼錯誤
+ *       '500':
+ *         description: 伺服器錯誤
+ */
 router.post('/user/autologin', verifyToken, async (req, res) => {
-  try {
-    const { ID, PWD } = req.body;
-    const webAiotDb = await getConnection('WebAIOT');
-    const query = `
-      SELECT
-        [CNAME],
-        [ID]
-      FROM [sys_ERPaccount]
-      WHERE [ID] = @ID
-        AND [PWD] = @PWD;
-    `;
-    const result = await webAiotDb
-      .request()
-      .input('ID', sql.VarChar, ID)
-      .input('PWD', sql.VarChar, cryptoHashText(PWD, { uppercase: true }))
-      .query(query);
+  const { ID, role } = req.user;
 
-    if (result.recordset.length > 0) {
-      const payload = {
-        ID: result.recordset[0].ID,
-        name: result.recordset[0].CNAME,
-        role: 'ERP',
-      };
-
-      const token = jwt.sign(
-        { payload, exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 },
-        process.env.JWT_TOKEN,
-      );
-      res.status(200).json({
-        ID: cryptoEncryptText(result.recordset[0].ID, publicKey),
-        token,
-        name: result.recordset[0].CNAME,
-      });
-    } else {
-      const webAiotDb = await getConnection('WebAIOT');
-      const query2 = `
-        SELECT
-          [CNAME],
-          [ID]
-        FROM [sys_AIOTaccount]
-        WHERE [ENABLE] = 1
-          AND [ID] = @ID
-          AND [PWD] = @PWD;
-      `;
-      const result2 = await webAiotDb
-        .request()
-        .input('ID', sql.VarChar, ID)
-        .input('PWD', sql.VarChar, cryptoHashText(PWD, { uppercase: true }))
-        .query(query2);
-
-      if (result2.recordset.length > 0) {
-        const payload = {
-          ID: result2.recordset[0].ID,
-          name: result2.recordset[0].CNAME,
-          role: 'AIOT',
-        };
-
-        const token = jwt.sign(
-          { payload, exp: Math.floor(Date.now() / 1000) + 60 * 60 },
-          process.env.JWT_TOKEN,
-        );
-        res.status(200).json({
-          ID: cryptoEncryptText(result2.recordset[0].ID, publicKey),
-          token,
-          name: result2.recordset[0].CNAME,
-        });
-      } else {
-        res.status(401).json({ 
-          success: false, 
-          message: 'Invalid credentials' 
-        });
-      }
-    }
-  } catch (error) {
-    console.error(`${req.method} ${req.originalUrl} error:`, error);
-    res.status(500).json({
-      success: false,
-      message: '伺服器錯誤',
-      error: error.message,
-    });
-  }
-});
-
-// 使用者權限頁面
-router.post('/user/pages', verifyToken, async (req, res) => {
-  const { ID } = req.user;
-
-  if (!ID) {
+  if (!ID || !['ERP', 'AIOT'].includes(role)) {
     return res.status(401).json({
       success: false,
-      message: 'ID is missing.',
+      message: 'Unauthorized',
     });
   }
+
+  try {
+    const webAiotDb = await getConnection('WebAIOT');
+
+    const query = role === 'ERP'
+      ? `
+        SELECT
+          [CNAME],
+          [ID]
+        FROM [sys_ERPaccount]
+        WHERE [ID] = @ID;
+      `
+      : `
+        SELECT
+          [CNAME],
+          [ID]
+        FROM [sys_AIOTaccount]
+        WHERE [ENABLE] = 1
+          AND [ID] = @ID;
+      `;
+
+    const result = await webAiotDb
+      .request()
+      .input('ID', sql.VarChar, ID)
+      .query(query);
+
+
+    const user = result.recordset[0];
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    const token = jwt.sign(
+      {
+        ID: user.ID,
+        name: user.CNAME,
+        role,
+      },
+      process.env.JWT_TOKEN,
+      {
+        algorithm: 'HS256',
+        issuer: 'aiot-api',
+        audience: 'aiot-web',
+        expiresIn: '1h',
+      },
+    );
+
+    return res.status(200).json({
+      ID: cryptoEncryptText(user.ID, publicKey),
+      token,
+      name: user.CNAME,
+    });
+  } catch (error) {
+    console.error(`${req.method} ${req.originalUrl} error:`, error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
+  }
+});
+
+/**
+ * @swagger
+ * /aiot/user/pages:
+ *   post:
+ *     tags:
+ *       - User
+ *     summary: 使用者權限頁面
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       '200':
+ *         description: 登入成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 PAGE:
+ *                   type: string
+ *                 pageName:
+ *                   type: string
+ *                 category:
+ *                   type: string
+ *                 serial:
+ *                   type: string
+ *       '500':
+ *         description: 伺服器錯誤
+ */
+router.post('/user/pages', verifyToken, async (req, res) => {
+  const { ID } = req.user;
 
   try {
     const webAiotDb = await getConnection('WebAIOT');
@@ -230,7 +313,7 @@ router.post('/user/pages', verifyToken, async (req, res) => {
       .input('user', sql.NVarChar, ID)
       .query(query);
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: result.recordset,
     });
@@ -238,10 +321,9 @@ router.post('/user/pages', verifyToken, async (req, res) => {
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
