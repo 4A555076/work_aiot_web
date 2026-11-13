@@ -186,70 +186,143 @@ router.post('/user/login', async (req, res) => {
  *       '500':
  *         description: 伺服器錯誤
  */
-router.post('/user/autologin', verifyToken, async (req, res) => {
-  const { ID, role } = req.user;
-
-  if (!ID || !['ERP', 'AIOT'].includes(role)) {
-    return res.status(401).json({
-      success: false,
-      message: 'Unauthorized',
-    });
-  }
-
+router.post('/user/autologin', async (req, res) => {
   try {
-    const webAiotDb = await getConnection('WebAIOT');
+    const match = /^Bearer ([^\s]+)$/i.exec(req.get('Authorization') || '');
 
-    const query = role === 'ERP'
-      ? `
-        SELECT
-          [CNAME],
-          [ID]
-        FROM [sys_ERPaccount]
-        WHERE [ID] = @ID;
-      `
-      : `
-        SELECT
-          [CNAME],
-          [ID]
-        FROM [sys_AIOTaccount]
-        WHERE [ENABLE] = 1
-          AND [ID] = @ID;
-      `;
-
-    const result = await webAiotDb
-      .request()
-      .input('ID', sql.VarChar, ID)
-      .query(query);
-
-
-    const user = result.recordset[0];
-
-    if (!user) {
+    if (!match) {
       return res.status(401).json({
         success: false,
         message: 'Unauthorized',
       });
     }
 
-    const token = jwt.sign(
-      {
-        ID: user.ID,
-        name: user.CNAME,
-        role,
-      },
-      process.env.JWT_TOKEN,
-      {
-        algorithm: 'HS256',
-        issuer: 'aiot-api',
-        audience: 'aiot-web',
-        expiresIn: '1h',
-      },
-    );
+    // 驗證 JWT
+    let decoded;
 
-    return res.status(200).json({
-      ID: cryptoEncryptText(user.ID, publicKey),
-      token,
-      name: user.CNAME,
+    try {
+      decoded = jwt.verify(match[1], process.env.JWT_TOKEN, {
+        algorithms: ['HS256'],
+      });
+    } catch (error) {
+      return res.status(401).json({
+        success: false,
+        message: error.name === 'TokenExpiredError'
+          ? 'Token expired'
+          : 'Unauthorized',
+      });
+    }
+
+    // 判斷是否為舊版外部系統 JWT
+    const isLegacyToken =
+      decoded &&
+      typeof decoded.ID === 'string' &&
+      typeof decoded.PWD === 'string' &&
+      decoded.role === undefined &&
+      decoded.payload === undefined &&
+      decoded.iss === undefined &&
+      decoded.aud === undefined;
+
+    // 外部系統 JWT 必須具有過期時間
+    if (isLegacyToken && !Number.isInteger(decoded.exp)) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    // 取得 JWT 使用者資料
+    const userInfo = decoded?.payload ?? decoded;
+
+    const ID = isLegacyToken ? decoded.ID : userInfo?.ID;
+    const roles = isLegacyToken
+      ? ['ERP', 'AIOT']
+      : [userInfo?.role];
+
+    if (!ID || typeof ID !== 'string' || roles.some((role) => !['ERP', 'AIOT'].includes(role))) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    // 檢查 AIOT JWT 的 issuer 和 audience
+    if (
+      !isLegacyToken &&
+      (decoded.iss !== undefined || decoded.aud !== undefined) &&
+      (decoded.iss !== 'aiot-api' || decoded.aud !== 'aiot-web')
+    ) {
+      return res.status(401).json({
+        success: false,
+        message: 'Unauthorized',
+      });
+    }
+
+    const webAiotDb = await getConnection('WebAIOT');
+
+    // 舊版外部系統需驗證密碼
+    const hashedPWD = isLegacyToken
+      ? cryptoHashText(decoded.PWD, { uppercase: true })
+      : null;
+
+    for (const role of roles) {
+      const query = role === 'ERP'
+        ? `
+          SELECT
+            [CNAME],
+            [ID]
+          FROM [sys_ERPaccount]
+          WHERE [ID] = @ID
+          ${isLegacyToken ? 'AND [PWD] = @PWD' : ''};
+        `
+        : `
+          SELECT
+            [CNAME],
+            [ID]
+          FROM [sys_AIOTaccount]
+          WHERE [ENABLE] = 1
+            AND [ID] = @ID
+            ${isLegacyToken ? 'AND [PWD] = @PWD' : ''};
+        `;
+
+      const request = webAiotDb
+        .request()
+        .input('ID', sql.VarChar, ID);
+
+      if (isLegacyToken) {
+        request.input('PWD', sql.VarChar, hashedPWD);
+      }
+
+      const result = await request.query(query);
+      const user = result.recordset[0];
+
+      if (!user) continue;
+
+      const token = jwt.sign(
+        {
+          ID: user.ID,
+          name: user.CNAME,
+          role,
+        },
+        process.env.JWT_TOKEN,
+        {
+          algorithm: 'HS256',
+          issuer: 'aiot-api',
+          audience: 'aiot-web',
+          expiresIn: '1h',
+        },
+      );
+
+      return res.status(200).json({
+        ID: cryptoEncryptText(user.ID, publicKey),
+        token,
+        name: user.CNAME,
+      });
+    }
+
+    return res.status(401).json({
+      success: false,
+      message: 'Unauthorized',
     });
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
