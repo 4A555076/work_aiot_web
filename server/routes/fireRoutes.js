@@ -4,13 +4,15 @@ const sql = require('mssql');
 const { getConnection } = require('../db/pool');
 const { verifyToken } = require('../middleware/authMiddleware');
 
+
 /**
  * @swagger
  * /aiot/fire/projects:
- *   post:
+ *   get:
  *     tags:
  *       - Fire
- *     summary: 取得使用者可查看的火災專案
+ *     summary: 取得使用者可查看的火災專案列表
+ *     description: 根據登入使用者的身分，比對其專案權限，回傳對應的火災專案事件代碼列表。
  *     security:
  *       - bearerAuth: []
  *     responses:
@@ -23,6 +25,7 @@ const { verifyToken } = require('../middleware/authMiddleware');
  *               properties:
  *                 success:
  *                   type: boolean
+ *                   example: true
  *                 data:
  *                   type: array
  *                   items:
@@ -30,14 +33,18 @@ const { verifyToken } = require('../middleware/authMiddleware');
  *                     properties:
  *                       ENID:
  *                         type: string
+ *                         description: 事件代碼
+ *                         example: "EN20240001"
  *                       PJName_TW:
  *                         type: string
+ *                         description: 專案/事件中文描述
+ *                         example: "火災警訊-高雄市"
  *       '401':
  *         description: 身份驗證錯誤
  *       '500':
  *         description: 伺服器錯誤
  */
-router.post('/fire/projects', verifyToken, async (req, res) => {
+router.get('/fire/projects', verifyToken, async (req, res) => {
   const { ID } = req.user;
 
   try {
@@ -46,37 +53,39 @@ router.post('/fire/projects', verifyToken, async (req, res) => {
       getConnection('WebAIOT'),
     ]);
 
-    const query = `
-        SELECT [ID], [PROJID], [ENABLE] 
-        FROM [WebAIOT].[dbo].[cfg_CtrlUserPJID] 
-        WHERE [ID] = @ID AND [ENABLE] = 1;
-      `;
+    const userProjectsQuery = `
+      SELECT [ID], [PROJID], [ENABLE] 
+      FROM [WebAIOT].[dbo].[cfg_CtrlUserPJID] 
+      WHERE [ID] = @ID AND [ENABLE] = 1;
+    `;
 
-    const query2 = `
-        SELECT A.[ENID], B.[value] AS ProjID, A.[Desc]
-        FROM [AIOT].[dbo].[cfgEventN] AS A
-        CROSS APPLY STRING_SPLIT(A.[ProjID], ',') AS B
-        WHERE A.[Event] = 'EN119' AND A.[actENID] = 1;
-      `;
+    const eventsQuery = `
+      SELECT A.[ENID], B.[value] AS ProjID, A.[Desc]
+      FROM [AIOT].[dbo].[cfgEventN] AS A
+      CROSS APPLY STRING_SPLIT(A.[ProjID], ',') AS B
+      WHERE A.[Event] = 'EN119' AND A.[actENID] = 1;
+    `;
 
-    const [result, result2] = await Promise.all([
+    const [userProjectsResult, eventsResult] = await Promise.all([
       webAiotDb
         .request()
         .input('ID', sql.VarChar, ID)
-        .query(query),
+        .query(userProjectsQuery),
 
       aiotDb
         .request()
-        .query(query2),
+        .query(eventsQuery),
     ]);
 
     const visibleProjSet = new Set(
-      result.recordset.map((row) => String(row.PROJID).trim())
+      userProjectsResult.recordset
+        .filter((row) => row.PROJID != null)
+        .map((row) => String(row.PROJID).trim())
     );
 
     const eventMap = new Map();
 
-    for (const { ProjID, ENID, Desc } of result2.recordset) {
+    for (const { ProjID, ENID, Desc } of eventsResult.recordset) {
       if (!ProjID || eventMap.has(ENID)) {
         continue;
       }
@@ -89,11 +98,11 @@ router.post('/fire/projects', verifyToken, async (req, res) => {
       }
     }
 
-    const filtered = Array.from(eventMap.values());
+    const filteredProjects = Array.from(eventMap.values());
 
     return res.status(200).json({
       success: true,
-      data: filtered,
+      data: filteredProjects,
     });
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
@@ -109,40 +118,42 @@ router.post('/fire/projects', verifyToken, async (req, res) => {
 
 /**
  * @swagger
- * /aiot/fire/reports:
- *   post:
+ * /aiot/fire/{ENID}/reports:
+ *   get:
  *     tags:
  *       - Fire
- *     summary: 查詢火災紀錄
+ *     summary: 查詢指定事件的火災紀錄
  *     security:
  *       - bearerAuth: []
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - startDateTime
- *               - endDateTime
- *               - ENID
- *             properties:
- *               startDateTime:
- *                 type: string
- *                 description: 查詢起始時間
- *                 example: "2026-11-01 00:00:00"
- *               endDateTime:
- *                 type: string
- *                 description: 查詢結束時間
- *                 example: "2026-11-11 23:59:59"
- *               ENID:
- *                 type: string
- *                 description: 事件代碼
- *                 example: "EN20240001"
- *               squadCount:
- *                 type: integer
- *                 description: 出動分隊數下限（選填），未傳入時不篩選分隊數
- *                 example: 3
+ *     parameters:
+ *       - in: path
+ *         name: ENID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 事件代碼
+ *         example: "EN20240001"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 起始時間 (格式 yyyy-MM-dd HH:mm)
+ *         example: "2026-11-01 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 結束時間 (格式 yyyy-MM-dd HH:mm)
+ *         example: "2026-11-11 23:59"
+ *       - in: query
+ *         name: squadCount
+ *         required: false
+ *         schema:
+ *           type: integer
+ *         description: 出動分隊數下限（選填），未傳入時不篩選分隊數
+ *         example: 3
  *     responses:
  *       '200':
  *         description: 查詢成功
@@ -163,6 +174,8 @@ router.post('/fire/projects', verifyToken, async (req, res) => {
  *                         type: string
  *                       ENID:
  *                         type: string
+ *                       cDate:
+ *                         type: string
  *                       Ack:
  *                         type: number
  *                       Event:
@@ -181,7 +194,6 @@ router.post('/fire/projects', verifyToken, async (req, res) => {
  *                         type: string
  *                       durationMinute:
  *                         type: string
- *                        
  *       '400':
  *         description: 請求參數錯誤
  *       '401':
@@ -191,10 +203,13 @@ router.post('/fire/projects', verifyToken, async (req, res) => {
  *       '500':
  *         description: 伺服器錯誤
  */
-router.post('/fire/reports', verifyToken, async (req, res) => {
+router.get('/fire/:ENID/reports', verifyToken, async (req, res) => {
   const { ID } = req.user;
-  const { startDateTime, endDateTime, ENID, squadCount } = req.body;
+  // 從 req.params 取得路徑參數，從 req.query 取得查詢參數
+  const { ENID } = req.params;
+  const { startDateTime, endDateTime, squadCount } = req.query;
 
+  // 驗證必要的參數是否存在且有效
   if (![startDateTime, endDateTime, ENID].every(
     value => typeof value === 'string' && value.trim()
   )) {
@@ -209,7 +224,7 @@ router.post('/fire/reports', verifyToken, async (req, res) => {
     squadCount !== null &&
     squadCount !== '';
 
-try {
+  try {
     const [aiotDb, webAiotDb] = await Promise.all([
       getConnection('AIOT'),
       getConnection('WebAIOT'),
