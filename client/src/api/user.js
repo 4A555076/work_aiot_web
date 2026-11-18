@@ -76,6 +76,6 @@ export const getUserAutoLogin = async ({ iv, jwt }) => {
 };
 
 export const getUserPages = async () => {
-  const response = await api.post("/user/pages");
+  const response = await api.get("/user/pages");
   return response.data.data;
 };

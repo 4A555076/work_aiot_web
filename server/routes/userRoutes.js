@@ -337,32 +337,47 @@ router.post('/user/autologin', async (req, res) => {
 /**
  * @swagger
  * /aiot/user/pages:
- *   post:
+ *   get:
  *     tags:
  *       - User
- *     summary: 使用者權限頁面
+ *     summary: 取得目前登入使用者的權限頁面清單
+ *     description: 解析出的使用者身分，查詢其所屬部門與權限對應可訪問的系統頁面清單。
  *     security:
  *       - bearerAuth: []
  *     responses:
  *       '200':
- *         description: 登入成功
+ *         description: 查詢成功
  *         content:
  *           application/json:
  *             schema:
  *               type: object
  *               properties:
- *                 PAGE:
- *                   type: string
- *                 pageName:
- *                   type: string
- *                 category:
- *                   type: string
- *                 serial:
- *                   type: string
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: array
+ *                   items:
+ *                     type: object
+ *                     properties:
+ *                       PAGE:
+ *                         type: string
+ *                         example: "dashboard"
+ *                       pageName:
+ *                         type: string
+ *                         example: "儀表板"
+ *                       category:
+ *                         type: string
+ *                         example: "系統監控"
+ *                       serial:
+ *                         type: string
+ *                         example: "1"
+ *       '401':
+ *         description: 身份驗證錯誤
  *       '500':
  *         description: 伺服器錯誤
  */
-router.post('/user/pages', verifyToken, async (req, res) => {
+router.get('/user/pages', verifyToken, async (req, res) => {
   const { ID } = req.user;
 
   try {
@@ -378,7 +393,7 @@ router.post('/user/pages', verifyToken, async (req, res) => {
       INNER JOIN [WebAIOT].[dbo].[cfg_CtrlUserPermissions] b ON a.[INDEX] = b.[INDEX]
       LEFT JOIN [WebAIOT].[dbo].[cfg_CtrlPageName] c ON b.[PAGE] = c.[PAGE]
       WHERE [MEMBERS] LIKE '%' + @user + '%'
-      GROUP BY b.[PAGE],c.[pageName],[category],[serial]
+      GROUP BY b.[PAGE], c.[pageName], [category], [serial]
     `;
 
     const result = await webAiotDb
