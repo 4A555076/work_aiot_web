@@ -185,9 +185,9 @@ export function useCompareChartData() {
 
     try {
       const res = await Promise.allSettled(
-        paramsList.map(({ STID, PJID, ...params }) => PJID === "TAQMN"
-          ? getTAQMNStationData(STID, params)
-          : getStationData(STID, { PJID, ...params })),
+        paramsList.map(({ PJID, ...params }) => PJID === "TAQMN"
+          ? getTAQMNStationData(params)
+          : getStationData(params.STID, { PJID, ...params })),
       );
 
       setData(res);
