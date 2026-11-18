@@ -20,17 +20,6 @@ const options = {
       },
     ],
 
-    tags: [
-      {
-        name: 'Fire',
-        description: '火災專案相關 API',
-      },
-      {
-        name: 'User',
-        description: '使用者相關 API',
-      },
-    ],
-
     components: {
       securitySchemes: {
         bearerAuth: {

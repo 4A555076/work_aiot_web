@@ -28,7 +28,7 @@ app.use('/aiot', stationRoutes);
 app.use('/aiot', openDataRoutes);
 app.use('/aiot', chartRoutes);
 
-app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+app.use('/aiot/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
 router.get('/*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
