@@ -98,11 +98,11 @@ export default function QaqcReportPage() {
       header: "圖表",
       cell: ({ row }) => {
 
-        const handleOpen = async () => {
-          const imagePath = `${row.original.SN}\\${row.original.SN}_${row.original.PRSN}.jpg`;
-          const title = row.original.PRSN;
-
-          await fetchSensorHealthImage(imagePath,title);
+        const handleOpen = () => {
+          fetchSensorHealthImage({
+            SN: row.original.SN,
+            PRSN: row.original.PRSN
+          });
         };
 
         return (

@@ -21,8 +21,9 @@ export default function SensorReplacementEntryPage() {
   const [photoError, setPhotoError] = useState("");
   const [readingPhoto, setReadingPhoto] = useState(false);
   const [showSerialMenu, setShowSerialMenu] = useState(false);
-  const [sensorKeyword, setSensorKeyword] = useState("");
   const [submitMessage, setSubmitMessage] = useState("");
+  const canEnterSensor = Boolean(form.project && form.station);
+  const sensorKeyword = canEnterSensor ? form.sensor.trim() : "";
 
   const {
     data: projectsListData,
@@ -39,16 +40,12 @@ export default function SensorReplacementEntryPage() {
     data: sensorSerialList,
     loading: loadingSensorSerialList,
     error: sensorSerialError,
-    fetchSensorSerialList,
-    clearSensorSerialList,
-  } = useSensorSerialList();
+  } = useSensorSerialList(sensorKeyword);
   const {
     loading: updatingSensor,
     error: updateSensorError,
     fetchUpdateSensor,
   } = useUpdateSensor();
-
-  const canEnterSensor = Boolean(form.project && form.station);
 
   useEffect(() => {
     fetchProjectsList();
@@ -64,24 +61,17 @@ export default function SensorReplacementEntryPage() {
     setForm((prev) => ({ ...prev, station: "" }));
   }, [form.project]);
 
-  useEffect(() => {
-    const keyword = sensorKeyword.trim();
-
-    if (!canEnterSensor || !keyword) {
-      clearSensorSerialList();
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      fetchSensorSerialList(keyword);
-    }, 300);
-
-    return () => window.clearTimeout(timer);
-  }, [sensorKeyword, canEnterSensor]);
-
-  const normalizedSensor = form.sensor.trim().toLowerCase();
+  const normalizedSensor = sensorKeyword.toLowerCase();
   const filteredSensorSerials = sensorSerialList.filter((serial) =>
     serial.toLowerCase().includes(normalizedSensor)
+  );
+  const verifiedSensor = filteredSensorSerials.find((serial) =>
+    serial.toLowerCase() === normalizedSensor
+  );
+  const sensorValidationError = sensorSerialError || (
+    sensorKeyword && !loadingSensorSerialList && !verifiedSensor
+      ? "查無完整相符的 Sensor 序號，請確認序號或從清單選擇。"
+      : ""
   );
   const sensorGuideText = !form.project
     ? "請先選擇專案"
@@ -93,7 +83,7 @@ export default function SensorReplacementEntryPage() {
     if (!result?.[0]?.rawValue) return;
 
     setForm((prev) => ({ ...prev, sensor: result[0].rawValue }));
-    setSensorKeyword("");
+    setShowSerialMenu(false);
     setOpenScanner(false); 
   };
 
@@ -116,7 +106,7 @@ export default function SensorReplacementEntryPage() {
       }
 
       setForm((prev) => ({ ...prev, sensor: serial }));
-      setSensorKeyword("");
+      setShowSerialMenu(false);
     } catch (error) {
       console.error("照片條碼辨識失敗:", error);
       setPhotoError("照片條碼辨識失敗，請重試或改用相機掃描");
@@ -126,20 +116,18 @@ export default function SensorReplacementEntryPage() {
   };
 
   const handleSubmit = async () => {
-    const newSensorSn = form.sensor.trim();
-    if (!form.project || !form.station || !newSensorSn) return;
+    if (!canEnterSensor || !verifiedSensor || updatingSensor || readingPhoto) return;
 
     setSubmitMessage("");
     try {
       const response = await fetchUpdateSensor({
         PJID: form.project,
         STID: form.station,
-        newSensorSn,
+        newSensorSn: verifiedSensor,
       });
       setSubmitMessage(response?.message || "Sensor 更換成功");
       setForm((prev) => ({ ...prev, sensor: "" }));
-      setSensorKeyword("");
-      clearSensorSerialList();
+      setShowSerialMenu(false);
     } catch {
       // Error text is exposed by the hook and rendered below.
     }
@@ -165,7 +153,7 @@ export default function SensorReplacementEntryPage() {
               value={form.project}
               onChange={(val) => {
                 setForm((prev) => ({ ...prev, project: val, station: "", sensor: "" }));
-                setSensorKeyword("");
+                setShowSerialMenu(false);
               }}
               options={projectsListData}
               placeholder="請選擇專案"
@@ -176,7 +164,7 @@ export default function SensorReplacementEntryPage() {
               value={form.station}
               onChange={(val) => {
                 setForm((prev) => ({ ...prev, station: val, sensor: "" }));
-                setSensorKeyword("");
+                setShowSerialMenu(false);
               }}
               options={StationListData}
               placeholder={!form.project ? "請先選擇專案" : "請選擇測站"}
@@ -204,24 +192,26 @@ export default function SensorReplacementEntryPage() {
             >
               <div className="relative">
                 <BaseInput
+                  id="new-sensor-serial"
                   label="直接輸入搜尋"
                   disabled={!canEnterSensor}
                   value={form.sensor}
+                  error={sensorValidationError}
+                  aria-invalid={Boolean(sensorValidationError)}
                   onFocus={() => canEnterSensor && setShowSerialMenu(true)}
                   onChange={(e) => {
                     setForm({ ...form, sensor: e.target.value });
-                    setSensorKeyword(e.target.value);
                     setShowSerialMenu(true);
                   }}
                   placeholder={!canEnterSensor ? sensorGuideText : loadingSensorSerialList ? "序號清單載入中..." : "直接輸入搜尋"}
                 />
 
-                {canEnterSensor && showSerialMenu && !loadingSensorSerialList && (
+                {showSerialMenu && filteredSensorSerials.length > 0 && (
                   <div
                     role="listbox"
                     className="absolute inset-x-0 top-full z-40 mt-2 max-h-40 overflow-y-auto rounded-xl border border-border bg-white p-1.5 shadow-xl"
                   >
-                    {filteredSensorSerials.length > 0 ? filteredSensorSerials.map((serial) => (
+                    {filteredSensorSerials.map((serial) => (
                       <button
                         key={serial}
                         type="button"
@@ -230,21 +220,18 @@ export default function SensorReplacementEntryPage() {
                         className="flex w-full items-center rounded-lg px-3 py-2.5 text-left type-body hover:bg-input/30 "
                         onClick={() => {
                           setForm((prev) => ({ ...prev, sensor: serial }));
-                          setSensorKeyword("");
                           setShowSerialMenu(false);
                         }}
                       >
                         <span className="min-w-0 break-all">{serial}</span>
                       </button>
-                    )) : (
-                      <div className="px-3 py-6 text-center type-body text-muted-foreground ">
-                        沒有結果
-                      </div>
-                    )}
+                    ))}
                   </div>
                 )}
               </div>
-              {sensorSerialError && <p className="type-meta text-destructive ">{sensorSerialError}</p>}
+              {loadingSensorSerialList && (
+                <p role="status" className="type-meta text-muted-foreground">正在查驗 Sensor 序號…</p>
+              )}
             </div>
 
             <div className="relative flex items-center py-1">
@@ -291,7 +278,7 @@ export default function SensorReplacementEntryPage() {
               </p>
               <BaseButton
                 className="w-full px-8 sm:w-auto"
-                disabled={!canEnterSensor || !form.sensor.trim()}
+                disabled={!verifiedSensor || readingPhoto}
                 loading={updatingSensor}
                 onClick={handleSubmit}
               >

@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import dayjs from 'dayjs'
 import utc from "dayjs/plugin/utc";
 dayjs.extend(utc);
@@ -89,48 +89,41 @@ export function useStationList() {
     };
 }
 
-export function useSensorSerialList() {
-    const [data, setData] = useState([]);
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
-    const requestIdRef = useRef(0);
+export function useSensorSerialList(keyword) {
+    const [result, setResult] = useState(null);
 
-    const fetchSensorSerialList = async (keyword = "") => {
-        const requestId = ++requestIdRef.current;
-        setLoading(true);
-        setError(null);
+    useEffect(() => {
+        if (!keyword) return;
 
-        try {
-            const res = await getSensorComponentSerialsList({ keyword });
-            if (requestId !== requestIdRef.current) return;
-            setData((res || [])
-                .map((item) => item.PRSN ?? item.SN ?? item.serialNumber)
-                .filter(Boolean)
-                .map(String));
-        } catch (err) {
-            if (requestId !== requestIdRef.current) return;
-            console.error("error:", err);
-            setError(err?.response?.data?.message || err?.message || "取得 Sensor 序號失敗");
-        } finally {
-            if (requestId === requestIdRef.current) {
-                setLoading(false);
+        let active = true;
+        const timer = window.setTimeout(async () => {
+            try {
+                const rows = await getSensorComponentSerialsList({ keyword });
+                if (!active) return;
+
+                const data = rows
+                    .map((item) => item.PRSN?.trim())
+                    .filter(Boolean);
+                setResult({ keyword, data });
+            } catch {
+                if (active) {
+                    setResult({ keyword, error: "暫時無法查驗 Sensor 序號，請稍後重新輸入。" });
+                }
             }
-        }
-    };
+        }, 300);
 
-    const clearSensorSerialList = () => {
-        requestIdRef.current += 1;
-        setData([]);
-        setError(null);
-        setLoading(false);
-    };
+        return () => {
+            active = false;
+            window.clearTimeout(timer);
+        };
+    }, [keyword]);
+
+    const currentResult = keyword && result?.keyword === keyword ? result : null;
 
     return {
-        data,
-        loading,
-        error,
-        fetchSensorSerialList,
-        clearSensorSerialList,
+        data: currentResult?.data ?? [],
+        loading: Boolean(keyword && !currentResult),
+        error: currentResult?.error,
     };
 }
 

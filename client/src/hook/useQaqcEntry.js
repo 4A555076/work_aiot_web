@@ -8,7 +8,7 @@ import {
     deleteQaqcData,
     getPCBList,
     getQaqcData,
-    getQaqcTestSerialsData,
+    getTestIdDateRangeList,
     updateQaqcData,
 } from "@/api/sensor";
 
@@ -59,11 +59,12 @@ export function useQaqcTestSerialsData() {
         setError(null);
 
         try {
-            const res = await getQaqcTestSerialsData({
+            const res = await getTestIdDateRangeList({
                 startDateTime: form.startTime,
                 endDateTime: form.endTime,
+                filterType: "test"
             });
-            const records = (res.data || []).map((item) => ({
+            const records = (res || []).map((item) => ({
                 ...item,
                 id: item.SN,
                 value: item.SN,
