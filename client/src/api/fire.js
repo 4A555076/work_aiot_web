@@ -7,7 +7,7 @@ export const getFireProjects = async () => {
 
 export const getFireReport = async ({ ENID, ...params }) => {
   const response = await api.get(`/fire/${ENID}/reports`, {
-    params, 
+    params: params, 
   });
   
   return response.data.data;

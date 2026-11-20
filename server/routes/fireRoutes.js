@@ -205,11 +205,9 @@ router.get('/fire/projects', verifyToken, async (req, res) => {
  */
 router.get('/fire/:ENID/reports', verifyToken, async (req, res) => {
   const { ID } = req.user;
-  // 從 req.params 取得路徑參數，從 req.query 取得查詢參數
   const { ENID } = req.params;
   const { startDateTime, endDateTime, squadCount } = req.query;
 
-  // 驗證必要的參數是否存在且有效
   if (![startDateTime, endDateTime, ENID].every(
     value => typeof value === 'string' && value.trim()
   )) {
