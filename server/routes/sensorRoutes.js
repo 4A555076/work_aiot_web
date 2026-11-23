@@ -1557,6 +1557,61 @@ router.get('/sensors/replace', verifyToken, async (req, res) => {
 
 
 
+/**
+ * @swagger
+ * /aiot/sensors/replace:
+ *   post:
+ *     tags:
+ *       - Sensor
+ *     summary: 更換測站感測器
+ *     description: 根據專案編號、測站編號及新感測器元件序號，更換測站 PM2.5 感測器。更新測站校正係數（slpC、itcC），將原感測器狀態改為「替換」，並新增感測器上線紀錄。
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - PJID
+ *               - STID
+ *               - newSensorSn
+ *             properties:
+ *               PJID:
+ *                 type: string
+ *                 description: 專案編號
+ *                 example: "PJ001"
+ *               STID:
+ *                 type: string
+ *                 description: 測站編號
+ *                 example: "O30477"
+ *               newSensorSn:
+ *                 type: string
+ *                 description: 新感元件序號(PRSN)
+ *                 example: "HPMA115S0"
+ *     responses:
+ *       '200':
+ *         description: 感測器更換成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 message:
+ *                   type: string
+ *                   example: "更新成功"
+ *       '400':
+ *         description: 請求參數錯誤
+ *       '401':
+ *         description: 身份驗證錯誤
+ *       '500':
+ *         description: 伺服器錯誤
+ */
+
 router.post('/sensors/replace', verifyToken, async (req, res) => {
   const { PJID, STID, newSensorSn } = req.body;
   const { ID } = req.user;
