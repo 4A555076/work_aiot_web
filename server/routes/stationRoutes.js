@@ -8,7 +8,7 @@ const { getConnection } = require('../db/pool');
 const { verifyToken } = require('../middleware/authMiddleware');
 const { dateFormatLocal, dateIsSameTime } = require('../utils/dateUtils');
 const { fileEnsureDirectory, fileRemoveAll, fileRenamePathKeys } = require('../utils/fileUtils');
-const { formatChemicalSubscript, formatTruncateOneDecimal } = require('../utils/formatUtils');
+const { formatChemicalFormula,formatTruncateDecimal } = require('../utils/commonUtils');
 const { geoCalculateHaversineDistance } = require('../utils/geoUtils');
 const { idGenerateDateSequence, idGenerateMonthlySequence } = require('../utils/idUtils');
 const { uploadCreateImageMiddleware, uploadRunMiddleware } = require('../utils/uploadUtils');
@@ -1377,7 +1377,7 @@ router.post('/station/data/:STID', verifyToken, async (req, res) => {
             }
 
             if ((key.startsWith('Value') || key.startsWith('Count')) && typeof value === 'number') {
-              return [key, formatTruncateOneDecimal(value)];
+              return [key, formatTruncateDecimal(value, 1, false)];
             }
 
             return [key, value];
@@ -1444,10 +1444,10 @@ router.post('/station/model/:STID', verifyToken, async (req, res) => {
 
         Object.entries(record).forEach(([key, value]) => {
           if (key.startsWith('ParName')) {
-            updatedRecord[key] = formatChemicalSubscript(value); // 直接覆蓋原欄位值
+            updatedRecord[key] = formatChemicalFormula(value,"subscript"); // 直接覆蓋原欄位值
             updatedRecord[`${key}Count`] = value ? `${updatedRecord[key]} (Count)` : null;
           } else if (key.startsWith('ParUnit')) {
-            updatedRecord[key] = formatChemicalSubscript(value);
+            updatedRecord[key] = formatChemicalFormula(value, "subscript");
           }
         });
 

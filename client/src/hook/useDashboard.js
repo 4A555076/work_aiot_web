@@ -346,7 +346,7 @@ const createAnalysisPayload = (station, query, box) => ({
   startDateTime: dayjs(query.startTime).format("YYYY-MM-DD HH:mm"),
   endDateTime: dayjs(query.endTime).format("YYYY-MM-DD HH:mm"),
   type: isEPA(station) ? "T60" : query.timeType,
-  box,
+  ...box,
 });
 
 export function useDashboard(selectedStations = []) {

@@ -6,28 +6,43 @@ export const getStationDashboardRealtime = async (params) => {
   return response.data.data;
 };
 
-export const getStationDashboardLine = async (params) => {
-  const response = await api.post('/stations/dashboard/line', params);
+export const getStationDashboardLine = async ({ PJID, STID, ...params }) => {
+  const response = await api.get(`/analytics/${PJID}/${STID}/line`, {
+    params: params
+  });
+
   return response.data.data;
 };
 
-export const getStationDashboardBoxplot = async (params) => {
-  const response = await api.post('/stations/dashboard/boxplot', params);
+export const getStationDashboardBoxplot = async ({ PJID, STID, ...params }) => {
+  const response = await api.get(`/analytics/${PJID}/${STID}/boxplot`, { 
+    params: params 
+  });
+
   return response.data.data;
 };
 
-export const getStationDashboardHeatmap = async (params) => {
-  const response = await api.post('/stations/dashboard/heatmap', params);
+export const getStationDashboardHeatmap = async ({ PJID, STID, ...params }) => {
+  const response = await api.get(`/analytics/${PJID}/${STID}/heatmap`, { 
+    params: params 
+  });
+
   return response.data.data;
 };
 
-export const getStationDashboardWindRose = async (params) => {
-  const response = await api.post('/stations/dashboard/wind-rose', params);
+export const getStationDashboardWindRose = async ({ PJID, STID, ...params }) => {
+  const response = await api.get(`/analytics/${PJID}/${STID}/wind-rose`, { 
+    params: params 
+  });
+
   return response.data.data;
 };
 
-export const getStationDashboardWindVector = async (params) => {
-  const response = await api.post('/stations/dashboard/wind-vector', params);
+export const getStationDashboardWindVector = async ({ PJID, STID, ...params }) => {
+  const response = await api.get(`/analytics/${PJID}/${STID}/wind-vector`, { 
+    params: params 
+  });
+
   return response.data.data;
 };
 

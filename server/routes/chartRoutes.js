@@ -12,15 +12,17 @@ const {
   formatToSqlDateTime,
 } = require('../utils/dateUtils');
 const {
-  formatChemicalSubscript,
-  formatFixedOneDecimal,
-  formatNormalizeChemicalFormula,
-  formatTruncateOneDecimal,
-} = require('../utils/formatUtils');
-const { buildBoxplots, parseBoxplotOptions } = require('../utils/boxplotUtils');
-const { buildHeatmaps } = require('../utils/heatmapUtils');
-const { buildWindRose } = require('../utils/windRoseUtils');
-const { buildWindVector } = require('../utils/windVectorUtils');
+  formatChemicalFormula,
+  formatTruncateDecimal, 
+} = require('../utils/commonUtils');
+const {
+  formatLineData, 
+  parseBoxplotOptions,
+  formatBoxplotData,
+  formatHeatmapData,
+  formatWindRoseData,
+  formatWindVectorData
+} = require('../utils/chartUtils');
 const {
   createDashboardReportResponse,
   validateDashboardReportRequest,
@@ -59,6 +61,126 @@ const EPA_MODELS = [
   { value: 'AQI', name: 'AQI', label: '空氣品質指標 AQI', unit: '' },
 ];
 
+const getStationChartData = async ({
+  PJID,
+  STID,
+  ID,
+  role,
+  type,
+  startDateTime,
+  endDateTime,
+}) => {
+  const aiotDb = await getConnection('AIOT');
+
+  const query = `
+    SELECT
+        A.[ProjID],
+        B.[PJName_TW],
+        A.[STID],
+        A.[IIT],
+        A.[Desc]
+    FROM [AIOT].[dbo].[ctrlStation] A
+    INNER JOIN [AIOT].[dbo].[ctrlProject] B
+        ON A.[ProjID] = B.[PJID]
+    WHERE A.[ProjID] = @PJID
+      AND A.[STID] = @STID
+      AND EXISTS (
+          SELECT 1
+          FROM [192.168.3.202].[WebAIOT].[dbo].[cfg_CtrlUserPJID] C
+          WHERE C.[ID] = @ID
+            AND C.[ENABLE] = 1
+            AND C.[PROJID] = A.[ProjID]
+            AND (
+                C.[ALL] = 1
+                OR (
+                    C.[ST_STID] IS NOT NULL
+                    AND C.[ED_STID] IS NOT NULL
+                    AND A.[STID] BETWEEN C.[ST_STID] AND C.[ED_STID]
+                )
+                OR A.[STID] IN (
+                    SELECT TRIM(value)
+                    FROM STRING_SPLIT(C.[IN_STID], ',')
+                )
+            )
+      );
+  `;
+
+  const result = await aiotDb
+    .request()
+    .input('ID', sql.VarChar, ID)
+    .input('PJID', sql.VarChar, PJID)
+    .input('STID', sql.VarChar, STID)
+    .query(query);
+
+  if (result.recordset.length === 0) return null;
+
+  const query2 = `
+    SELECT B.*
+    FROM [AIOT].[dbo].[ctrlStation] A
+    INNER JOIN [AIOT].[dbo].[cfgModel] B
+      ON A.[Model] = B.[Model]
+    WHERE A.[ProjID] = @PJID
+      AND A.[STID] = @STID
+  `;
+
+  const result2 = await aiotDb
+    .request()
+    .input('PJID', sql.VarChar, PJID)
+    .input('STID', sql.VarChar, STID)
+    .query(query2);
+
+  const modelRow = result2.recordset[0] || {};
+
+  const models = Array.from({ length: 8 }, (_, i) => i + 1)
+    .flatMap((i) => {
+      const name = formatChemicalFormula(modelRow[`ParName${i}`], 'subscript');
+      if (!name) return [];
+
+      const unit = modelRow[`ParUnit${i}`] || '';
+
+      const items = [{
+        value: `Value${i}`,
+        name,
+        label: unit ? `${name} (${unit})` : name,
+        unit,
+      }];
+
+      if (role === 'ERP') {
+        items.push({
+          value: `Count${i}`,
+          name: `${name} Count`,
+          label: `${name} Count`,
+          unit: '',
+        });
+      }
+
+      return items;
+    });
+
+  const query3 = `
+    EXEC dbo.GetData
+      @STID = @STID,
+      @PROJID = @PJID,
+      @FDATE = @startDateTime,
+      @TDATE = @endDateTime,
+      @TYPE = @type
+  `;
+
+  const result3 = await aiotDb
+    .request()
+    .input('STID', sql.VarChar, STID)
+    .input('PJID', sql.VarChar, PJID)
+    .input('type', sql.VarChar, type)
+    .input('startDateTime', sql.VarChar, startDateTime)
+    .input('endDateTime', sql.VarChar, endDateTime)
+    .query(query3);
+
+  return {
+    models,
+    rows: result3.recordset,
+  };
+};
+
 // Dashboard
 router.post('/stations/dashboard/realtime', verifyToken, async (req, res) => {
   const { PJID, STID, type = 'T01' } = req.body;
@@ -93,7 +215,7 @@ router.post('/stations/dashboard/realtime', verifyToken, async (req, res) => {
     const modelRow = result.recordset[0] || {};
 
     const models = Array.from( { length: 8 }, (_, offset) => offset + 1 ).flatMap((index) => {
-      const name = formatChemicalSubscript(modelRow['ParName' + index]);
+      const name = formatChemicalFormula(modelRow['ParName' + index], "subscript");
 
       if (!name) return [];
 
@@ -176,7 +298,7 @@ router.post('/stations/dashboard/realtime', verifyToken, async (req, res) => {
       Object.fromEntries(
         Object.entries(row).map(([key, value]) => [
           key,
-          modelKeys.has(key) ? formatTruncateOneDecimal(value) : value,
+          modelKeys.has(key) ? formatTruncateDecimal(value, 1, false) : value,
         ])
       )
     );
@@ -201,261 +323,561 @@ router.post('/stations/dashboard/realtime', verifyToken, async (req, res) => {
   }
 });
 
-router.post('/stations/dashboard/line', verifyToken, async (req, res) => {
-  const { PJID, STID, startDateTime, endDateTime, type } = req.body;
-  const { role } = req.user;
+
+
+/**
+ * @swagger
+ * /aiot/analytics/{PJID}/{STID}/line:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢測站歷史趨勢資料
+ *     description: 根據指定的測站、資料類型及時間區間，查詢歷史趨勢資料。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: PJID
+ *         required: true
+ *         description: 專案編號
+ *         schema:
+ *           type: string
+ *         example: "108023"
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         description: 測站編號
+ *         schema:
+ *           type: string
+ *         example: "8000316"
+ *       - in: query
+ *         name: type
+ *         required: true
+ *         description: 資料類型
+ *         schema:
+ *           type: string
+ *         example: "T60"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         schema:
+ *           type: string
+ *         example: "2026-11-01 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         schema:
+ *           type: string
+ *         example: "2026-11-01 23:59"
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             description: 測項資料欄位名稱
+ *                             example: "Value1"
+ *                           name:
+ *                             type: string
+ *                             description: 測項名稱
+ *                             example: "SO₂"
+ *                           label:
+ *                             type: string
+ *                             description: 測項名稱及單位
+ *                             example: "SO₂ (ppm)"
+ *                           unit:
+ *                             type: string
+ *                             description: 測項單位
+ *                             example: "ppm"
+ *                     line:
+ *                       type: object
+ *                       additionalProperties:
+ *                         type: array
+ *                         items:
+ *                           type: array
+ *                           minItems: 2
+ *                           maxItems: 2
+ *                           items:
+ *                             type: number
+ *                             nullable: true
+ *                       example:
+ *                         Value1:
+ *                           - [1793462400000, 12.3]
+ *                           - [1793462700000, 12.5]
+ *                         Value2:
+ *                           - [1793462400000, 8.1]
+ *                           - [1793462700000, 8.3]
+ *                     history:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           Date_Time:
+ *                             type: string
+ *                             description: 資料時間
+ *                             example: "2026-11-01 00:00:00"
+ *                         additionalProperties: true
+ *                       example:
+ *                         - Date_Time: "2026-11-01 00:00:00"
+ *                           Value1: 12.345
+ *                           Value2: 8.123
+ *                         - Date_Time: "2026-11-01 00:05:00"
+ *                           Value1: 12.567
+ *                           Value2: 8.345
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       403:
+ *         description: 沒有查詢該事件的權限
+ *       500:
+ *         description: 伺服器內部錯誤
+ */
+router.get('/analytics/:PJID/:STID/line', verifyToken, async (req, res) => {
+  const { PJID, STID } = req.params;
+  const { type, startDateTime, endDateTime } = req.query;
+  const { role, ID } = req.user;
   
-  if (!PJID || !STID || !startDateTime || !endDateTime) {
+  if (![PJID, STID, type, startDateTime, endDateTime].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'PJID、STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
   }
 
   try {
-    const aiotDb = await getConnection('AIOT');
-      const query = `
-        SELECT B.*
-        FROM [AIOT].[dbo].[ctrlStation] A
-        INNER JOIN [AIOT].[dbo].[cfgModel] B
-          ON A.Model = B.Model
-        WHERE A.ProjID = @PJID
-          AND A.STID = @STID
-      `;
-      const result = await aiotDb
-        .request()
-        .input('PJID', sql.VarChar, PJID)
-        .input('STID', sql.VarChar, STID)
-        .query(query);
-
-      const modelRow = result.recordset[0] || {};
-
-      const models = Array.from( { length: 8 }, (_, offset) => offset + 1 ).flatMap((index) => {
-        const name = formatChemicalSubscript(modelRow['ParName' + index]);
-
-        if (!name) return [];
-
-        const valueModel = {
-          value: 'Value' + index,
-          name,
-          label: modelRow['ParUnit' + index]
-            ? `${name} (${modelRow['ParUnit' + index]})`
-            : name,
-          unit: modelRow['ParUnit' + index] || '',
-        };
-
-        const countModel = {
-          value: 'Count' + index,
-          name: name + ' Count',
-          label: name + ' Count',
-          unit: '',
-        };
-
-        return role === 'ERP'
-          ? [valueModel, countModel]
-          : [valueModel];
+      const result = await getStationChartData({
+        PJID,
+        STID,
+        ID,
+        role,
+        type,
+        startDateTime,
+        endDateTime,
       });
 
-      const query2 = `
-        EXEC dbo.GetData @STID=@STID, @PROJID=@PJID, @FDATE=@startDateTime, @TDATE=@endDateTime, @TYPE=@type
-      `
-      const result2 = await aiotDb.request()
-        .input('STID', sql.VarChar, STID)
-        .input('PJID', sql.VarChar, PJID)
-        .input('startDateTime', sql.VarChar, startDateTime)
-        .input('endDateTime', sql.VarChar, endDateTime)
-        .input('type', sql.VarChar, type || 'T05')
-        .query(query2);
-      const rows = result2.recordset.filter((row) => {
-        const date = new Date(row.Date_Time);
-        return !Number.isNaN(date.getTime());
-      }).sort(
-        (left, right) =>
-          new Date(left.Date_Time).getTime() - new Date(right.Date_Time).getTime(),
-      );
-      const decimalPlaces = String(PJID) === '200209' ? 2 : 1;
-      const line = {};
-      for (const model of models) line[model.value] = [];
-      for (const row of rows) {
-        const timestamp = new Date(row.Date_Time).getTime();
-        for (const model of models) {
-          const value = Number(row[model.value]);
-          if (Number.isFinite(value)) {
-            line[model.value].push([
-              timestamp,
-              formatTruncateOneDecimal(value, decimalPlaces),
-            ]);
-          }
-        }
+      if (!result) {
+        return res.status(403).json({
+          success: false,
+          message: 'Forbidden',
+        });
       }
+
+      const { models, rows } = result; 
+      const decimalPlaces = String(PJID) === '200209' ? 2 : 1;
+      
+      const { line, rows: history } = formatLineData(
+        rows,
+        models,
+        decimalPlaces
+      );
+      
       return res.status(200).json({
         success: true,
-        data: { models, line, history: rows },
+        data: { models, line, history }
       });
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
 
-router.post('/stations/dashboard/boxplot', verifyToken, async (req, res) => {
-  const { PJID, STID, startDateTime, endDateTime, type, box = {} } = req.body;
-  const { role } = req.user;
 
-  if (!PJID || !STID || !startDateTime || !endDateTime) {
+
+/**
+ * @swagger
+ * /aiot/analytics/{PJID}/{STID}/boxplot:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢測站歷史盒鬚圖資料
+ *     description: 根據指定的測站、資料類型及時間區間，查詢歷史盒鬚圖資料。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: PJID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 專案編號
+ *         example: "200209"
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 測站編號
+ *         example: "3100075"
+ *       - in: query
+ *         name: type
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 資料類型
+ *         example: "T01"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 15:42"
+ *       - in: query
+ *         name: timeGroup
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [hour, day, week, month]
+ *         description: 時間分組方式
+ *         example: "day"
+ *       - in: query
+ *         name: lower
+ *         required: true
+ *         schema:
+ *           type: number
+ *         description: 下百分位數
+ *         example: 25
+ *       - in: query
+ *         name: upper
+ *         required: true
+ *         schema:
+ *           type: number
+ *         description: 上百分位數
+ *         example: 75
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       description: 測站測項清單
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             example: "Value1"
+ *                           name:
+ *                             type: string
+ *                             example: "SO₂"
+ *                           label:
+ *                             type: string
+ *                             example: "SO₂ (ppm)"
+ *                           unit:
+ *                             type: string
+ *                             example: "ppm"
+ *                     boxplots:
+ *                       type: object
+ *                       description: 各測項的盒鬚圖資料
+ *                       additionalProperties:
+ *                         type: object
+ *                         properties:
+ *                           categories:
+ *                             type: array
+ *                             description: 時間分組標籤
+ *                             items:
+ *                               type: string
+ *                           data:
+ *                             type: array
+ *                             description: 各組盒鬚圖數值，依序為最小值、下百分位數、中位數、上百分位數、最大值
+ *                             items:
+ *                               type: array
+ *                               minItems: 5
+ *                               maxItems: 5
+ *                               items:
+ *                                 type: number
+ *                           outliers:
+ *                             type: array
+ *                             description: 離群值資料，格式為 [分組索引, 數值]
+ *                             items:
+ *                               type: array
+ *                               minItems: 2
+ *                               maxItems: 2
+ *                               items:
+ *                                 type: number
+ *                       example:
+ *                         Value1:
+ *                           categories:
+ *                             - "2026-11-23"
+ *                           data:
+ *                             - [10.2, 12.3, 15.5, 18.7, 21.4]
+ *                           outliers:
+ *                             - [0, 30.5]
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       403:
+ *         description: 沒有查詢該事件的權限
+ *       500:
+ *         description: 伺服器內部錯誤
+ */
+router.get('/analytics/:PJID/:STID/boxplot', verifyToken, async (req, res) => {
+  const { role, ID } = req.user;
+  const { PJID, STID } = req.params;
+  const { type, startDateTime, endDateTime, timeGroup, lower, upper } = req.query;
+
+  if (![PJID, STID, type, startDateTime, endDateTime, timeGroup, lower, upper].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'PJID、STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
-  }
+  };
 
-  const boxplotOptions = parseBoxplotOptions(box);
+  const boxplotOptions = parseBoxplotOptions({
+    timeGroup,
+    lower,
+    upper,
+  });
+
   if (!boxplotOptions) {
     return res.status(400).json({
       success: false,
-      message: '盒鬚圖設定不正確：時間分組需為 hour、day、week 或 month，且上下百分位需分別位於 0–50 與 50–100 之間。',
+      message: 'Bad request',
     });
   }
 
   try {
-    const aiotDb = await getConnection('AIOT');
-      const query = `
-        SELECT B.*
-        FROM [AIOT].[dbo].[ctrlStation] A
-        INNER JOIN [AIOT].[dbo].[cfgModel] B
-          ON A.Model = B.Model
-        WHERE A.ProjID = @PJID
-          AND A.STID = @STID
-      `;
-      const result = await aiotDb
-        .request()
-        .input('PJID', sql.VarChar, PJID)
-        .input('STID', sql.VarChar, STID)
-        .query(query);
+    const result = await getStationChartData({
+      PJID,
+      STID,
+      ID,
+      role,
+      type,
+      startDateTime,
+      endDateTime,
+    });
 
-      const modelRow = result.recordset[0] || {};
-
-      const models = Array.from( { length: 8 }, (_, offset) => offset + 1 ).flatMap((index) => {
-        const name = formatChemicalSubscript(modelRow['ParName' + index]);
-
-        if (!name) return [];
-
-        const valueModel = {
-          value: 'Value' + index,
-          name,
-          label: modelRow['ParUnit' + index]
-            ? `${name} (${modelRow['ParUnit' + index]})`
-            : name,
-          unit: modelRow['ParUnit' + index] || '',
-        };
-
-        const countModel = {
-          value: 'Count' + index,
-          name: name + ' Count',
-          label: name + ' Count',
-          unit: '',
-        };
-
-        return role === 'ERP'
-          ? [valueModel, countModel]
-          : [valueModel];
+    if (!result) {
+      return res.status(403).json({
+        success: false,
+        message: 'Forbidden',
       });
-      const query2 = `
-        EXEC dbo.GetData @STID=@STID, @PROJID=@PJID, @FDATE=@startDateTime, @TDATE=@endDateTime, @TYPE=@type
-      `
-      const result2 = await aiotDb.request()
-        .input('STID', sql.VarChar, STID)
-        .input('PJID', sql.VarChar, PJID)
-        .input('startDateTime', sql.VarChar, startDateTime)
-        .input('endDateTime', sql.VarChar, endDateTime)
-        .input('type', sql.VarChar, type || 'T05')
-        .query(query2);
-      const boxplots = buildBoxplots(result2.recordset, models, boxplotOptions);
-      return res.status(200).json({ 
-        success: true, 
-        data: { models, boxplots } 
-      });
+    }
+
+    const { models, rows } = result; 
+
+    const { boxplots } = formatBoxplotData(
+      rows,
+      models,
+      boxplotOptions
+    );
+
+    return res.status(200).json({
+      success: true,
+      data: { models, boxplots },
+    });
+
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
 
-router.post('/stations/dashboard/heatmap', verifyToken, async (req, res) => {
-  const { PJID, STID, startDateTime, endDateTime, type } = req.body;
-  const { role } = req.user;
 
-  if (!PJID || !STID || !startDateTime || !endDateTime) {
+
+/**
+ * @swagger
+ * /aiot/analytics/{PJID}/{STID}/heatmap:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢測站歷史熱點圖資料
+ *     description: 根據指定的測站、資料類型及時間區間，查詢歷史熱點圖資料。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: PJID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 專案編號
+ *         example: "200209"
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 測站編號
+ *         example: "3100075"
+ *       - in: query
+ *         name: type
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 資料類型
+ *         example: "T01"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 15:42"
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       description: 測站測項清單
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             example: "Value1"
+ *                           name:
+ *                             type: string
+ *                             example: "SO₂"
+ *                           label:
+ *                             type: string
+ *                             example: "SO₂ (ppm)"
+ *                           unit:
+ *                             type: string
+ *                             example: "ppm"
+ *                     heatmaps:
+ *                       type: object
+ *                       description: 各測項的熱點圖資料
+ *                       additionalProperties:
+ *                         type: object
+ *                         properties:
+ *                           days:
+ *                             type: array
+ *                             description: 日期清單，依日期升冪排序
+ *                             items:
+ *                               type: string
+ *                           data:
+ *                             type: array
+ *                             description: 熱點圖資料，格式為 [日期索引, 小時, 平均值]
+ *                             items:
+ *                               type: array
+ *                               minItems: 3
+ *                               maxItems: 3
+ *                               items:
+ *                                 type: number
+ *                       example:
+ *                         Value1:
+ *                           days:
+ *                             - "2026-11-23"
+ *                             - "2026-11-24"
+ *                           data:
+ *                             - [0, 0, 12.3]
+ *                             - [0, 1, 13.5]
+ *                             - [1, 0, 11.2]
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       403:
+ *         description: 沒有查詢該事件的權限
+ *       500:
+ *         description: 伺服器內部錯誤
+ */
+router.get('/analytics/:PJID/:STID/heatmap', verifyToken, async (req, res) => {
+  const { role, ID } = req.user;
+  const { PJID, STID } = req.params;
+  const { startDateTime, endDateTime, type } = req.query;
+
+  if (![PJID, STID, type, startDateTime, endDateTime].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'PJID、STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
-  }
+  };
 
   try {
-    const aiotDb = await getConnection('AIOT');
-      const query = `
-        SELECT B.*
-        FROM [AIOT].[dbo].[ctrlStation] A
-        INNER JOIN [AIOT].[dbo].[cfgModel] B
-          ON A.Model = B.Model
-        WHERE A.ProjID = @PJID
-          AND A.STID = @STID
-      `;
-      const result = await aiotDb
-        .request()
-        .input('PJID', sql.VarChar, PJID)
-        .input('STID', sql.VarChar, STID)
-        .query(query);
-
-      const modelRow = result.recordset[0] || {};
-
-      const models = Array.from( { length: 8 }, (_, offset) => offset + 1 ).flatMap((index) => {
-        const name = formatChemicalSubscript(modelRow['ParName' + index]);
-
-        if (!name) return [];
-
-        const valueModel = {
-          value: 'Value' + index,
-          name,
-          label: modelRow['ParUnit' + index]
-            ? `${name} (${modelRow['ParUnit' + index]})`
-            : name,
-          unit: modelRow['ParUnit' + index] || '',
-        };
-
-        const countModel = {
-          value: 'Count' + index,
-          name: name + ' Count',
-          label: name + ' Count',
-          unit: '',
-        };
-
-        return role === 'ERP'
-          ? [valueModel, countModel]
-          : [valueModel];
+      const result = await getStationChartData({
+        PJID,
+        STID,
+        ID,
+        role,
+        type,
+        startDateTime,
+        endDateTime,
       });
-      const query2 = `
-        EXEC dbo.GetData @STID=@STID, @PROJID=@PJID, @FDATE=@startDateTime, @TDATE=@endDateTime, @TYPE=@type
-      `
-      const result2 = await aiotDb.request()
-        .input('STID', sql.VarChar, STID)
-        .input('PJID', sql.VarChar, PJID)
-        .input('startDateTime', sql.VarChar, startDateTime)
-        .input('endDateTime', sql.VarChar, endDateTime)
-        .input('type', sql.VarChar, type || 'T05')
-        .query(query2);
-      const heatmaps = buildHeatmaps(result2.recordset, models);
+
+      if (!result) {
+        return res.status(403).json({
+          success: false,
+          message: 'Forbidden',
+        });
+      }
+
+      const { models, rows } = result; 
+
+      const heatmaps = formatHeatmapData(
+        rows, 
+        models
+      );
+
       return res.status(200).json({ 
         success: true, 
         data: { models, heatmaps } 
@@ -463,79 +885,175 @@ router.post('/stations/dashboard/heatmap', verifyToken, async (req, res) => {
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
 
-router.post('/stations/dashboard/wind-rose', verifyToken, async (req, res) => {
-  const { PJID, STID, startDateTime, endDateTime, type } = req.body;
-  const { role } = req.user;
 
-  if (!PJID || !STID || !startDateTime || !endDateTime) {
+/**
+ * @swagger
+ * /aiot/analytics/{PJID}/{STID}/wind-rose:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢測站歷史風瑰圖資料
+ *     description: 根據指定的測站、資料類型及時間區間，查詢歷史風瑰圖資料。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: PJID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 專案編號
+ *         example: "200209"
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 測站編號
+ *         example: "3100075"
+ *       - in: query
+ *         name: type
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 資料類型
+ *         example: "T01"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 15:42"
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       description: 測站測項清單
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             example: "Value1"
+ *                           name:
+ *                             type: string
+ *                             example: "WS"
+ *                           label:
+ *                             type: string
+ *                             example: "WS (m/s)"
+ *                           unit:
+ *                             type: string
+ *                             example: "m/s"
+ *                     wind:
+ *                       type: object
+ *                       nullable: true
+ *                       description: 風瑰圖資料，無對應風向或風速測項時為 null
+ *                       properties:
+ *                         rose:
+ *                           type: array
+ *                           description: 八個風向的平均風速
+ *                           minItems: 8
+ *                           maxItems: 8
+ *                           items:
+ *                             type: number
+ *                           example: [1.2, 1.5, 2.1, 1.8, 0.9, 1.3, 2.4, 1.7]
+ *                         distribution:
+ *                           type: array
+ *                           description: 各風速級距在十六個風向的資料筆數
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               name:
+ *                                 type: string
+ *                                 description: 風速級距名稱
+ *                                 example: "0.5–1 m/s"
+ *                               data:
+ *                                 type: array
+ *                                 description: 十六個風向的資料筆數
+ *                                 minItems: 16
+ *                                 maxItems: 16
+ *                                 items:
+ *                                   type: integer
+ *                                 example: [2, 3, 5, 1, 0, 4, 2, 1, 3, 0, 1, 2, 4, 1, 0, 2]
+ *                         total:
+ *                           type: integer
+ *                           description: 有效風向風速資料總筆數
+ *                           example: 120
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       403:
+ *         description: 沒有查詢該事件的權限
+ *       500:
+ *         description: 伺服器錯誤
+ */
+router.get('/analytics/:PJID/:STID/wind-rose', verifyToken, async (req, res) => {
+  const { role, ID } = req.user;
+  const { PJID, STID } = req.params;
+  const { startDateTime, endDateTime, type } = req.query;
+
+  if (![PJID, STID, type, startDateTime, endDateTime].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'PJID、STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
-  }
+  };
 
   try {
-    const aiotDb = await getConnection('AIOT');
-      const query = `
-        SELECT B.*
-        FROM [AIOT].[dbo].[ctrlStation] A
-        INNER JOIN [AIOT].[dbo].[cfgModel] B
-          ON A.Model = B.Model
-        WHERE A.ProjID = @PJID
-          AND A.STID = @STID
-      `;
-      const result = await aiotDb
-        .request()
-        .input('PJID', sql.VarChar, PJID)
-        .input('STID', sql.VarChar, STID)
-        .query(query);
-
-      const modelRow = result.recordset[0] || {};
-
-      const models = Array.from( { length: 8 }, (_, offset) => offset + 1 ).flatMap((index) => {
-        const name = formatChemicalSubscript(modelRow['ParName' + index]);
-
-        if (!name) return [];
-
-        const valueModel = {
-          value: 'Value' + index,
-          name,
-          label: modelRow['ParUnit' + index]
-            ? `${name} (${modelRow['ParUnit' + index]})`
-            : name,
-          unit: modelRow['ParUnit' + index] || '',
-        };
-
-        const countModel = {
-          value: 'Count' + index,
-          name: name + ' Count',
-          label: name + ' Count',
-          unit: '',
-        };
-
-        return role === 'ERP'
-          ? [valueModel, countModel]
-          : [valueModel];
+      const result = await getStationChartData({
+        PJID,
+        STID,
+        ID,
+        role,
+        type,
+        startDateTime,
+        endDateTime,
       });
-      const query2 = `
-        EXEC dbo.GetData @STID=@STID, @PROJID=@PJID, @FDATE=@startDateTime, @TDATE=@endDateTime, @TYPE=@type
-      `
-      const result2 = await aiotDb.request()
-        .input('STID', sql.VarChar, STID)
-        .input('PJID', sql.VarChar, PJID)
-        .input('startDateTime', sql.VarChar, startDateTime)
-        .input('endDateTime', sql.VarChar, endDateTime)
-        .input('type', sql.VarChar, type || 'T05')
-        .query(query2);
-      const wind = buildWindRose(result2.recordset, models);
+
+      if (!result) {
+        return res.status(403).json({
+          success: false,
+          message: 'Forbidden',
+        });
+      }
+
+      const { models, rows } = result;
+
+      const wind = formatWindRoseData(
+        rows, 
+        models
+      );
+
       return res.status(200).json({
         success: true,
         data: { models, wind },
@@ -543,75 +1061,188 @@ router.post('/stations/dashboard/wind-rose', verifyToken, async (req, res) => {
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
 
-router.post('/stations/dashboard/wind-vector', verifyToken, async (req, res) => {
-  const { PJID, STID, startDateTime, endDateTime, type } = req.body;
-  const { role } = req.user;
-  if (!PJID || !STID || !startDateTime || !endDateTime) {
+
+
+/**
+ * @swagger
+ * /aiot/analytics/{PJID}/{STID}/wind-vector:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢測站歷史風向風速向量圖資料
+ *     description: 根據指定的測站、資料類型及時間區間，查詢歷史風向風速向量圖資料。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: PJID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 專案編號
+ *         example: "200209"
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 測站編號
+ *         example: "3100075"
+ *       - in: query
+ *         name: type
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 資料類型
+ *         example: "T01"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 15:42"
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       description: 測站測項清單
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             example: "Value1"
+ *                           name:
+ *                             type: string
+ *                             example: "WD"
+ *                           label:
+ *                             type: string
+ *                             example: "WD (°)"
+ *                           unit:
+ *                             type: string
+ *                             example: "°"
+ *                     wind:
+ *                       type: object
+ *                       nullable: true
+ *                       description: 風向風速向量圖資料，無對應風向或風速測項時為 null
+ *                       properties:
+ *                         points:
+ *                           type: array
+ *                           description: 依時間升冪排序的風向風速資料
+ *                           items:
+ *                             type: array
+ *                             description: 格式為 [Unix 毫秒時間戳記, 風速, 風向角度]
+ *                             minItems: 3
+ *                             maxItems: 3
+ *                             items:
+ *                               type: number
+ *                           example:
+ *                             - [1795382400000, 1.5, 90.0]
+ *                             - [1795382460000, 2.3, 135.0]
+ *                             - [1795382520000, 1.8, 180.0]
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       403:
+ *         description: 沒有查詢該事件的權限
+ *       500:
+ *         description: 伺服器錯誤
+ */
+router.get('/analytics/:PJID/:STID/wind-vector', verifyToken, async (req, res) => {
+  const { role, ID } = req.user;
+  const { PJID, STID } = req.params;
+  const { startDateTime, endDateTime, type } = req.query;
+
+  if (![PJID, STID, type, startDateTime, endDateTime].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'PJID、STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
-  }
-  if (['EPA', 'TAQMN'].includes(PJID)) {
-    return res.status(400).json({ success: false, message: 'EPA 請使用 open-data Dashboard API。' });
-  }
+  };
+
   try {
-    const aiotDb = await getConnection('AIOT');
-      const modelResult = await aiotDb.request()
-        .input('PJID', sql.VarChar, PJID)
-        .input('STID', sql.VarChar, STID)
-        .query(
-          'SELECT B.* FROM [AIOT].[dbo].[ctrlStation] A ' +
-          'INNER JOIN [AIOT].[dbo].[cfgModel] B ON A.Model = B.Model ' +
-          'WHERE A.ProjID = @PJID AND A.STID = @STID'
-        );
-      const modelRow = modelResult.recordset[0] || {};
-      const models = Array.from({ length: 8 }, (_, offset) => offset + 1).flatMap((index) => {
-        const name = formatChemicalSubscript(modelRow['ParName' + index]);
-        if (!name) return [];
-
-        const valueModel = {
-          value: 'Value' + index,
-          name,
-          label: modelRow['ParUnit' + index]
-            ? `${name} (${modelRow['ParUnit' + index]})`
-            : name,
-          unit: modelRow['ParUnit' + index] || '',
-        };
-        const countModel = {
-          value: 'Count' + index,
-          name: name + ' Count',
-          label: name + ' Count',
-          unit: '',
-        };
-
-        return role === 'AIOT' ? [valueModel, countModel] : [valueModel];
+      const result = await getStationChartData({
+        PJID,
+        STID,
+        ID,
+        role,
+        type,
+        startDateTime,
+        endDateTime,
       });
-      const rowResult = await aiotDb.request()
-        .input('STID', sql.VarChar, STID)
-        .input('PJID', sql.VarChar, PJID)
-        .input('startDateTime', sql.VarChar, startDateTime)
-        .input('endDateTime', sql.VarChar, endDateTime)
-        .input('type', sql.VarChar, type || 'T05')
-        .query('EXEC dbo.GetData @STID=@STID, @PROJID=@PJID, @FDATE=@startDateTime, @TDATE=@endDateTime, @TYPE=@type');
-      const wind = buildWindVector(rowResult.recordset, models);
+
+      if (!result) {
+        return res.status(403).json({
+          success: false,
+          message: 'Forbidden',
+        });
+      }
+
+      const { models, rows } = result;
+
+      const wind = formatWindVectorData(
+        rows, 
+        models
+      );
+
       return res.status(200).json({
         success: true,
         data: { models, wind },
       });
   } catch (error) {
-    console.error(req.method + ' ' + req.originalUrl + ' error:', error);
-    return res.status(500).json({ success: false, message: 'wind-vector query failed' });
+    console.error(`${req.method} ${req.originalUrl} error:`, error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+    });
   }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 // 測站日報表
@@ -654,7 +1285,7 @@ router.post('/stations/dashboard/daily-report', verifyToken, async (req, res) =>
       return res.status(404).json({ success: false, message: 'Station/Model not found.' });
     }
 
-    const baseModelType = formatNormalizeChemicalFormula(modelType).split(/[\s()\-]/)[0];
+    const baseModelType = formatChemicalFormula(modelType, "normal").split(/[\s()\-]/)[0];
     let targetIndex = 0;
 
     for (let index = 1; index <= 8; index += 1) {
@@ -696,7 +1327,7 @@ router.post('/stations/dashboard/daily-report', verifyToken, async (req, res) =>
         };
       }
 
-      grouped[dateString][hourString] = formatFixedOneDecimal(rawValue);
+      grouped[dateString][hourString] = formatTruncateDecimal(rawValue, 1, true);
     });
 
     const report = Object.values(grouped).sort((a, b) => {
@@ -776,7 +1407,7 @@ router.post('/stations/dashboard/table', verifyToken, async (req, res) => {
     );
     const parameters = Array.from({ length: 8 }, (_, offset) => {
       const index = offset + 1;
-      const name = formatChemicalSubscript(parameterNames[`ParName${index}`]?.trim());
+      const name = formatChemicalFormula(parameterNames[`ParName${index}`]?.trim(), "subscript");
       return { index, name };
     }).filter(({ name }) => name);
 
@@ -803,11 +1434,11 @@ router.post('/stations/dashboard/table', verifyToken, async (req, res) => {
           const includeCount = includeAll || selectedModelTypes.has(countName);
 
           if (includeValue) {
-            row[name] = formatFixedOneDecimal(sourceRow[`Value${index}`]);
+            row[name] = formatTruncateDecimal(sourceRow[`Value${index}`], 1, true);
           }
 
           if (includeCount) {
-            row[countName] = formatFixedOneDecimal(sourceRow[`Count${index}`]);
+            row[countName] = formatTruncateDecimal(sourceRow[`Count${index}`], 1, true);
           }
 
           if (flagOnly && (includeValue || includeCount)) {
@@ -883,7 +1514,7 @@ router.post('/stations/dashboard/monthly-report', verifyToken, async (req, res) 
     );
     const parameters = Array.from({ length: 8 }, (_, offset) => {
       const index = offset + 1;
-      const name = formatChemicalSubscript(parameterNames[`ParName${index}`]?.trim());
+      const name = formatChemicalFormula(parameterNames[`ParName${index}`]?.trim(), "subscript");
       return { index, name };
     }).filter(({ name }) => name);
     const query2 = `EXEC [dbo].[STP_AIOTWEB_GetStationMinuteToHourlyAvg] @StartDate = @startDate, @EndDate = @endDate, @STID = @STID;`;
@@ -905,11 +1536,11 @@ router.post('/stations/dashboard/monthly-report', verifyToken, async (req, res) 
           const countName = `${name} Count`;
 
           if (includeAll || selectedModelTypes.has(name)) {
-            row[name] = formatFixedOneDecimal(sourceRow[`Value${index}`]);
+            row[name] = formatTruncateDecimal(sourceRow[`Value${index}`], 1, true);
           }
 
           if (includeAll || selectedModelTypes.has(countName)) {
-            row[countName] = formatFixedOneDecimal(sourceRow[`Count${index}`]);
+            row[countName] = formatTruncateDecimal(sourceRow[`Count${index}`], 1, true);
           }
         });
 
@@ -984,7 +1615,7 @@ router.post('/open-data/dashboard/realtime', verifyToken, async (req, res) => {
       Object.fromEntries(
         Object.entries(row).map(([key, value]) => [
           key,
-          modelKeys.has(key) ? formatTruncateOneDecimal(value) : value,
+          modelKeys.has(key) ? formatTruncateDecimal(value, 1, false) : value,
         ])
       )
     );
@@ -1093,7 +1724,7 @@ router.post('/open-data/dashboard/boxplot', verifyToken, async (req, res) => {
         .input('startDateTime', sql.VarChar, startDateTime)
         .input('endDateTime', sql.VarChar, endDateTime)
         .query(query);
-      const boxplots = buildBoxplots(result.recordset, models, boxplotOptions);
+      const boxplots = formatBoxplotData(result.recordset, models, boxplotOptions);
       return res.status(200).json({ 
         success: true, 
         data: { models, boxplots } 
@@ -1131,7 +1762,7 @@ router.post('/open-data/dashboard/heatmap', verifyToken, async (req, res) => {
         .input('startDateTime', sql.VarChar, startDateTime)
         .input('endDateTime', sql.VarChar, endDateTime)
         .query(query);
-      const heatmaps = buildHeatmaps(result.recordset, models);
+      const heatmaps = formatHeatmapData(result.recordset, models);
       return res.status(200).json({ 
         success: true, 
         data: { models, heatmaps } 
@@ -1169,7 +1800,7 @@ router.post('/open-data/dashboard/wind-rose', verifyToken, async (req, res) => {
         .input('startDateTime', sql.VarChar, startDateTime)
         .input('endDateTime', sql.VarChar, endDateTime)
         .query(query);
-      const wind = buildWindRose(result.recordset, models);
+      const wind = formatWindRoseData(result.recordset, models);
       return res.status(200).json({
         success: true,
         data: { models, wind },
@@ -1206,7 +1837,7 @@ router.post('/open-data/dashboard/wind-vector', verifyToken, async (req, res) =>
       .input('startDateTime', sql.VarChar, startDateTime)
       .input('endDateTime', sql.VarChar, endDateTime)
       .query(query);
-    const wind = buildWindVector(result.recordset, models);
+    const wind = formatWindVectorData(result.recordset, models);
 
     return res.status(200).json({
       success: true,
