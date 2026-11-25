@@ -448,7 +448,7 @@ router.post('/stations/dashboard/realtime', verifyToken, async (req, res) => {
  *       403:
  *         description: 沒有查詢該事件的權限
  *       500:
- *         description: 伺服器內部錯誤
+ *         description: 伺服器錯誤
  */
 router.get('/analytics/:PJID/:STID/line', verifyToken, async (req, res) => {
   const { PJID, STID } = req.params;
@@ -566,6 +566,9 @@ router.get('/analytics/:PJID/:STID/line', verifyToken, async (req, res) => {
  *         required: true
  *         schema:
  *           type: number
+ *           minimum: 0
+ *           maximum: 50
+ *           exclusiveMaximum: true
  *         description: 下百分位數
  *         example: 25
  *       - in: query
@@ -573,6 +576,9 @@ router.get('/analytics/:PJID/:STID/line', verifyToken, async (req, res) => {
  *         required: true
  *         schema:
  *           type: number
+ *           minimum: 50
+ *           exclusiveMinimum: true
+ *           maximum: 100
  *         description: 上百分位數
  *         example: 75
  *     responses:
@@ -651,7 +657,7 @@ router.get('/analytics/:PJID/:STID/line', verifyToken, async (req, res) => {
  *       403:
  *         description: 沒有查詢該事件的權限
  *       500:
- *         description: 伺服器內部錯誤
+ *         description: 伺服器錯誤
  */
 router.get('/analytics/:PJID/:STID/boxplot', verifyToken, async (req, res) => {
   const { role, ID } = req.user;
@@ -836,7 +842,7 @@ router.get('/analytics/:PJID/:STID/boxplot', verifyToken, async (req, res) => {
  *       403:
  *         description: 沒有查詢該事件的權限
  *       500:
- *         description: 伺服器內部錯誤
+ *         description: 伺服器錯誤
  */
 router.get('/analytics/:PJID/:STID/heatmap', verifyToken, async (req, res) => {
   const { role, ID } = req.user;
@@ -1639,6 +1645,116 @@ router.post('/open-data/dashboard/realtime', verifyToken, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /aiot/epa/analytics/{STID}/line:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢 EPA 測站歷史折線圖資料
+ *     description: 查詢指定 EPA 空氣品質測站在時間區間內的逐時監測資料。回傳各測項的折線圖及原始歷史資料。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         description: 測站編號
+ *         schema:
+ *           type: string
+ *         example: "EPA01"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         schema:
+ *           type: string
+ *         example: "2026-11-01 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         schema:
+ *           type: string
+ *         example: "2026-11-01 23:00"
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             description: 測項資料欄位名稱
+ *                             example: "SO2"
+ *                           name:
+ *                             type: string
+ *                             description: 測項名稱
+ *                             example: "二氧化硫"
+ *                           label:
+ *                             type: string
+ *                             description: 測項名稱及單位
+ *                             example: "二氧化硫 SO₂ (ppm)"
+ *                           unit:
+ *                             type: string
+ *                             description: 測項單位
+ *                             example: "ppm"
+ *                     line:
+ *                       type: object
+ *                       description: 以測項欄位為鍵，每個資料點依序為 Unix 毫秒時間戳記與無條件捨去至小數一位的測值
+ *                       additionalProperties:
+ *                         type: array
+ *                         items:
+ *                           type: array
+ *                           minItems: 2
+ *                           maxItems: 2
+ *                           items:
+ *                             type: number
+ *                             nullable: true
+ *                       example:
+ *                         SO2:
+ *                           - [1793462400000, 12.3]
+ *                           - [1793466000000, 12.5]
+ *                         NO:
+ *                           - [1793462400000, 8.1]
+ *                           - [1793466000000, 8.3]
+ *                     history:
+ *                       type: array
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           Date_Time:
+ *                             type: string
+ *                             description: 資料時間
+ *                             example: "2026-11-01T00:00:00.000Z"
+ *                         additionalProperties: true
+ *                       example:
+ *                         - Date_Time: "2026-11-01T00:00:00.000Z"
+ *                           SO2: 12.345
+ *                           NO: 8.123
+ *                         - Date_Time: "2026-11-01T01:00:00.000Z"
+ *                           SO2: 12.567
+ *                           NO: 8.345
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       500:
+ *         description: 伺服器錯誤
+ */
 router.get('/epa/analytics/:STID/line', verifyToken, async (req, res) => {
   const { STID } = req.params;
   const { startDateTime, endDateTime } = req.query;
@@ -1687,6 +1803,142 @@ router.get('/epa/analytics/:STID/line', verifyToken, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /aiot/epa/analytics/{STID}/boxplot:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢 EPA 測站歷史盒鬚圖資料
+ *     description: 查詢指定 EPA 空氣品質測站在時間區間內的逐時監測資料。依時間分組與指定百分位數計算五數摘要及離群值。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 測站編號
+ *         example: "EPA01"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 15:00"
+ *       - in: query
+ *         name: timeGroup
+ *         required: true
+ *         schema:
+ *           type: string
+ *           enum: [hour, day, week, month]
+ *         description: 時間分組方式
+ *         example: "day"
+ *       - in: query
+ *         name: lower
+ *         required: true
+ *         schema:
+ *           type: number
+ *           minimum: 0
+ *           maximum: 50
+ *           exclusiveMaximum: true
+ *         description: 下百分位數
+ *         example: 25
+ *       - in: query
+ *         name: upper
+ *         required: true
+ *         schema:
+ *           type: number
+ *           minimum: 50
+ *           exclusiveMinimum: true
+ *           maximum: 100
+ *         description: 上百分位數
+ *         example: 75
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       description: 測站測項清單
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             example: "SO2"
+ *                           name:
+ *                             type: string
+ *                             example: "二氧化硫"
+ *                           label:
+ *                             type: string
+ *                             example: "二氧化硫 SO₂ (ppm)"
+ *                           unit:
+ *                             type: string
+ *                             example: "ppm"
+ *                     boxplots:
+ *                       type: object
+ *                       description: 各測項的盒鬚圖資料
+ *                       additionalProperties:
+ *                         type: object
+ *                         properties:
+ *                           categories:
+ *                             type: array
+ *                             description: 時間分組標籤
+ *                             items:
+ *                               type: string
+ *                           data:
+ *                             type: array
+ *                             description: 各組盒鬚圖數值，依序為非離群最小值、下百分位數、中位數、上百分位數、非離群最大值
+ *                             items:
+ *                               type: array
+ *                               minItems: 5
+ *                               maxItems: 5
+ *                               items:
+ *                                 type: number
+ *                           outliers:
+ *                             type: array
+ *                             description: 離群值資料，格式為 [分組索引, 數值]
+ *                             items:
+ *                               type: array
+ *                               minItems: 2
+ *                               maxItems: 2
+ *                               items:
+ *                                 type: number
+ *                       example:
+ *                         SO2:
+ *                           categories:
+ *                             - "2026-11-23"
+ *                           data:
+ *                             - [10.2, 12.3, 15.5, 18.7, 21.4]
+ *                           outliers:
+ *                             - [0, 30.5]
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       500:
+ *         description: 伺服器錯誤
+ */
 router.get('/epa/analytics/:STID/boxplot', verifyToken, async (req, res) => {
   const { STID } = req.params;
   const { startDateTime, endDateTime, timeGroup, lower, upper } = req.query;
@@ -1748,6 +2000,106 @@ router.get('/epa/analytics/:STID/boxplot', verifyToken, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /aiot/epa/analytics/{STID}/heatmap:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢 EPA 測站歷史熱力圖資料
+ *     description: 查詢指定 EPA 空氣品質測站在時間區間內的逐時監測資料。依日期與小時彙整各測項的平均值。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 測站編號
+ *         example: "EPA01"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 15:00"
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       description: 測站測項清單
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             example: "SO2"
+ *                           name:
+ *                             type: string
+ *                             example: "二氧化硫"
+ *                           label:
+ *                             type: string
+ *                             example: "二氧化硫 SO₂ (ppm)"
+ *                           unit:
+ *                             type: string
+ *                             example: "ppm"
+ *                     heatmaps:
+ *                       type: object
+ *                       description: 各測項的熱點圖資料
+ *                       additionalProperties:
+ *                         type: object
+ *                         properties:
+ *                           days:
+ *                             type: array
+ *                             description: 日期清單，依日期升冪排序
+ *                             items:
+ *                               type: string
+ *                           data:
+ *                             type: array
+ *                             description: 熱點圖資料，格式為 [日期索引, 小時, 平均值]
+ *                             items:
+ *                               type: array
+ *                               minItems: 3
+ *                               maxItems: 3
+ *                               items:
+ *                                 type: number
+ *                       example:
+ *                         SO2:
+ *                           days:
+ *                             - "2026-11-23"
+ *                             - "2026-11-24"
+ *                           data:
+ *                             - [0, 0, 12.3]
+ *                             - [0, 1, 13.5]
+ *                             - [1, 0, 11.2]
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       500:
+ *         description: 伺服器錯誤
+ */
 router.get('/epa/analytics/:STID/heatmap', verifyToken, async (req, res) => {
   const { STID } = req.params;
   const { startDateTime, endDateTime } = req.query;
@@ -1795,6 +2147,112 @@ router.get('/epa/analytics/:STID/heatmap', verifyToken, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /aiot/epa/analytics/{STID}/wind-rose:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢 EPA 測站歷史風瑰圖資料
+ *     description: 查詢指定 EPA 空氣品質測站在時間區間內的逐時監測資料。回傳八方位平均風速及十六方位的風速級距分布。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 測站編號
+ *         example: "EPA01"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 15:00"
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       description: 測站測項清單
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             example: "SO2"
+ *                           name:
+ *                             type: string
+ *                             example: "二氧化硫"
+ *                           label:
+ *                             type: string
+ *                             example: "二氧化硫 SO₂ (ppm)"
+ *                           unit:
+ *                             type: string
+ *                             example: "ppm"
+ *                     wind:
+ *                       type: object
+ *                       nullable: true
+ *                       description: 風瑰圖資料，無對應風向或風速測項時為 null
+ *                       properties:
+ *                         rose:
+ *                           type: array
+ *                           description: 八個風向的平均風速
+ *                           minItems: 8
+ *                           maxItems: 8
+ *                           items:
+ *                             type: number
+ *                           example: [1.2, 1.5, 2.1, 1.8, 0.9, 1.3, 2.4, 1.7]
+ *                         distribution:
+ *                           type: array
+ *                           description: 各風速級距在十六個風向的資料筆數
+ *                           items:
+ *                             type: object
+ *                             properties:
+ *                               name:
+ *                                 type: string
+ *                                 description: 風速級距名稱
+ *                                 example: "0.5–1 m/s"
+ *                               data:
+ *                                 type: array
+ *                                 description: 十六個風向的資料筆數
+ *                                 minItems: 16
+ *                                 maxItems: 16
+ *                                 items:
+ *                                   type: integer
+ *                                 example: [2, 3, 5, 1, 0, 4, 2, 1, 3, 0, 1, 2, 4, 1, 0, 2]
+ *                         total:
+ *                           type: integer
+ *                           description: 有效風向風速資料總筆數
+ *                           example: 120
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       500:
+ *         description: 伺服器錯誤
+ */
 router.get('/epa/analytics/:STID/wind-rose', verifyToken, async (req, res) => {
   const { STID } = req.params;
   const { startDateTime, endDateTime } = req.query;
@@ -1841,6 +2299,96 @@ router.get('/epa/analytics/:STID/wind-rose', verifyToken, async (req, res) => {
   }
 });
 
+/**
+ * @swagger
+ * /aiot/epa/analytics/{STID}/wind-vector:
+ *   get:
+ *     tags:
+ *       - Chart
+ *     summary: 查詢 EPA 測站歷史風向風速向量圖資料
+ *     description: 查詢指定 EPA 空氣品質測站在時間區間內的逐時監測資料。依時間回傳風速及風向角度。
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: STID
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 測站編號
+ *         example: "EPA01"
+ *       - in: query
+ *         name: startDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢起始時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 00:00"
+ *       - in: query
+ *         name: endDateTime
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: 查詢結束時間，格式 yyyy-MM-dd HH:mm
+ *         example: "2026-11-23 15:00"
+ *     responses:
+ *       200:
+ *         description: 查詢成功
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 success:
+ *                   type: boolean
+ *                   example: true
+ *                 data:
+ *                   type: object
+ *                   properties:
+ *                     models:
+ *                       type: array
+ *                       description: 測站測項清單
+ *                       items:
+ *                         type: object
+ *                         properties:
+ *                           value:
+ *                             type: string
+ *                             example: "SO2"
+ *                           name:
+ *                             type: string
+ *                             example: "二氧化硫"
+ *                           label:
+ *                             type: string
+ *                             example: "二氧化硫 SO₂ (ppm)"
+ *                           unit:
+ *                             type: string
+ *                             example: "ppm"
+ *                     wind:
+ *                       type: object
+ *                       nullable: true
+ *                       description: 風向風速向量圖資料，無對應風向或風速測項時為 null
+ *                       properties:
+ *                         points:
+ *                           type: array
+ *                           description: 依時間升冪排序的風向風速資料
+ *                           items:
+ *                             type: array
+ *                             description: 格式為 [Unix 毫秒時間戳記, 風速, 風向角度]
+ *                             minItems: 3
+ *                             maxItems: 3
+ *                             items:
+ *                               type: number
+ *                           example:
+ *                             - [1795382400000, 1.5, 90.0]
+ *                             - [1795386000000, 2.3, 135.0]
+ *                             - [1795389600000, 1.8, 180.0]
+ *       400:
+ *         description: 請求參數錯誤
+ *       401:
+ *         description: 身份驗證錯誤
+ *       500:
+ *         description: 伺服器錯誤
+ */
 router.get('/epa/analytics/:STID/wind-vector', verifyToken, async (req, res) => {
   const { STID } = req.params;
   const { startDateTime, endDateTime } = req.query;
