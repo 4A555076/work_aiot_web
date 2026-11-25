@@ -710,7 +710,6 @@ router.get('/analytics/:PJID/:STID/boxplot', verifyToken, async (req, res) => {
       success: true,
       data: { models, boxplots },
     });
-
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
@@ -1567,7 +1566,6 @@ router.post('/stations/dashboard/monthly-report', verifyToken, async (req, res) 
 });
 
 
-// EPA：
 router.post('/open-data/dashboard/realtime', verifyToken, async (req, res) => {
   const { STID } = req.body;
 
@@ -1641,19 +1639,23 @@ router.post('/open-data/dashboard/realtime', verifyToken, async (req, res) => {
   }
 });
 
-router.post('/open-data/dashboard/line', verifyToken, async (req, res) => {
-  const { STID, startDateTime, endDateTime } = req.body;
+router.get('/epa/analytics/:STID/line', verifyToken, async (req, res) => {
+  const { STID } = req.params;
+  const { startDateTime, endDateTime } = req.query;
 
-  if (!STID || !startDateTime || !endDateTime) {
+  if (![STID, startDateTime, endDateTime].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
   }
 
   try {
     const aiotDb = await getConnection('AIOT');
       const models = EPA_MODELS;
+
       const query = `
         SELECT * FROM [OPENDATA].[dbo].[dTAQMNT60]
         WHERE STID = @STID AND Date_Time BETWEEN @startDateTime AND @endDateTime
@@ -1664,56 +1666,57 @@ router.post('/open-data/dashboard/line', verifyToken, async (req, res) => {
         .input('startDateTime', sql.VarChar, startDateTime)
         .input('endDateTime', sql.VarChar, endDateTime)
         .query(query);
-      const rows = [];
-      for (const row of result.recordset) {
-        const date = new Date(row.Date_Time);
-        if (!Number.isNaN(date.getTime())) rows.push(row);
-      }
-      const line = {};
-      for (const model of models) line[model.value] = [];
-      for (const row of rows) {
-        const timestamp = new Date(row.Date_Time).getTime();
-        for (const model of models) {
-          const value = Number(row[model.value]);
-          if (Number.isFinite(value)) line[model.value].push([timestamp, value]);
-        }
-      }
+
+      const { line, rows: history } = formatLineData(
+        result.recordset,
+        models,
+        1
+      );
+
       return res.status(200).json({
         success: true,
-        data: { models, line, history: rows },
+        data: { models, line, history },
       });
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
 
-router.post('/open-data/dashboard/boxplot', verifyToken, async (req, res) => {
-  const { STID, startDateTime, endDateTime, box = {} } = req.body;
+router.get('/epa/analytics/:STID/boxplot', verifyToken, async (req, res) => {
+  const { STID } = req.params;
+  const { startDateTime, endDateTime, timeGroup, lower, upper } = req.query;
 
-  if (!STID || !startDateTime || !endDateTime) {
+  if (![STID, startDateTime, endDateTime, timeGroup, lower, upper].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
-  }
+  };
 
-  const boxplotOptions = parseBoxplotOptions(box);
+  const boxplotOptions = parseBoxplotOptions({
+    timeGroup,
+    lower,
+    upper,
+  });
+
   if (!boxplotOptions) {
     return res.status(400).json({
       success: false,
-      message: '盒鬚圖設定不正確：時間分組需為 hour、day、week 或 month，且上下百分位需分別位於 0–50 與 50–100 之間。',
+      message: 'Bad request',
     });
   }
 
   try {
     const aiotDb = await getConnection('AIOT');
       const models = EPA_MODELS;
+
       const query = `
         SELECT * FROM [OPENDATA].[dbo].[dTAQMNT60]
         WHERE STID = @STID AND Date_Time BETWEEN @startDateTime AND @endDateTime
@@ -1724,34 +1727,44 @@ router.post('/open-data/dashboard/boxplot', verifyToken, async (req, res) => {
         .input('startDateTime', sql.VarChar, startDateTime)
         .input('endDateTime', sql.VarChar, endDateTime)
         .query(query);
-      const boxplots = formatBoxplotData(result.recordset, models, boxplotOptions);
-      return res.status(200).json({ 
-        success: true, 
-        data: { models, boxplots } 
+
+      const { boxplots } = formatBoxplotData(
+        result.recordset,
+        models,
+        boxplotOptions
+      );
+
+      return res.status(200).json({
+        success: true,
+        data: { models, boxplots },
       });
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
 
-router.post('/open-data/dashboard/heatmap', verifyToken, async (req, res) => {
-  const { STID, startDateTime, endDateTime } = req.body;
+router.get('/epa/analytics/:STID/heatmap', verifyToken, async (req, res) => {
+  const { STID } = req.params;
+  const { startDateTime, endDateTime } = req.query;
 
-  if (!STID || !startDateTime || !endDateTime) {
+  if (![STID, startDateTime, endDateTime].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
-  }
+  };
+
   try {
     const aiotDb = await getConnection('AIOT');
       const models = EPA_MODELS;
+
       const query = `
         SELECT * FROM [OPENDATA].[dbo].[dTAQMNT60]
         WHERE STID = @STID AND Date_Time BETWEEN @startDateTime AND @endDateTime
@@ -1762,7 +1775,12 @@ router.post('/open-data/dashboard/heatmap', verifyToken, async (req, res) => {
         .input('startDateTime', sql.VarChar, startDateTime)
         .input('endDateTime', sql.VarChar, endDateTime)
         .query(query);
-      const heatmaps = formatHeatmapData(result.recordset, models);
+      
+      const heatmaps = formatHeatmapData(
+        result.recordset, 
+        models
+      );
+
       return res.status(200).json({ 
         success: true, 
         data: { models, heatmaps } 
@@ -1770,23 +1788,26 @@ router.post('/open-data/dashboard/heatmap', verifyToken, async (req, res) => {
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
 
-router.post('/open-data/dashboard/wind-rose', verifyToken, async (req, res) => {
-  const { STID, startDateTime, endDateTime } = req.body;
+router.get('/epa/analytics/:STID/wind-rose', verifyToken, async (req, res) => {
+  const { STID } = req.params;
+  const { startDateTime, endDateTime } = req.query;
 
-  if (!STID || !startDateTime || !endDateTime) {
+  if (![STID, startDateTime, endDateTime].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
-  }
+  };
+
   try {
     const aiotDb = await getConnection('AIOT');
       const models = EPA_MODELS;
@@ -1800,7 +1821,12 @@ router.post('/open-data/dashboard/wind-rose', verifyToken, async (req, res) => {
         .input('startDateTime', sql.VarChar, startDateTime)
         .input('endDateTime', sql.VarChar, endDateTime)
         .query(query);
-      const wind = formatWindRoseData(result.recordset, models);
+
+      const wind = formatWindRoseData(
+        result.recordset, 
+        models
+      );
+
       return res.status(200).json({
         success: true,
         data: { models, wind },
@@ -1808,22 +1834,25 @@ router.post('/open-data/dashboard/wind-rose', verifyToken, async (req, res) => {
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-      message: '伺服器錯誤',
-      error: error.message,
+      message: 'Internal server error',
     });
   }
 });
 
-router.post('/open-data/dashboard/wind-vector', verifyToken, async (req, res) => {
-  const { STID, startDateTime, endDateTime } = req.body;
-  if (!STID || !startDateTime || !endDateTime) {
+router.get('/epa/analytics/:STID/wind-vector', verifyToken, async (req, res) => {
+  const { STID } = req.params;
+  const { startDateTime, endDateTime } = req.query;
+
+  if (![STID, startDateTime, endDateTime].every(
+    value => typeof value === 'string' && value.trim()
+  )) {
     return res.status(400).json({
       success: false,
-      message: 'STID、startDateTime 與 endDateTime 為必填欄位。',
+      message: 'Bad request',
     });
-  }
+  };
   try {
     const aiotDb = await getConnection('AIOT');
     const models = EPA_MODELS;
@@ -1837,7 +1866,11 @@ router.post('/open-data/dashboard/wind-vector', verifyToken, async (req, res) =>
       .input('startDateTime', sql.VarChar, startDateTime)
       .input('endDateTime', sql.VarChar, endDateTime)
       .query(query);
-    const wind = formatWindVectorData(result.recordset, models);
+
+    const wind = formatWindVectorData(
+      result.recordset, 
+      models
+    );
 
     return res.status(200).json({
       success: true,
@@ -1846,7 +1879,7 @@ router.post('/open-data/dashboard/wind-vector', verifyToken, async (req, res) =>
   } catch (error) {
     console.error(`${req.method} ${req.originalUrl} error:`, error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: 'Internal server error',
     });

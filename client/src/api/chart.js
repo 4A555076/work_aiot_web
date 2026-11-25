@@ -66,28 +66,43 @@ export const getEpaDashboardRealtime = async (params) => {
   return response.data.data;
 };
 
-export const getEpaDashboardLine = async (params) => {
-  const response = await api.post('/open-data/dashboard/line', params);
+export const getEpaDashboardLine = async ({ STID, ...params }) => {
+  const response = await api.get(`/epa/analytics/${STID}/line`, {
+    params: params
+  });
+
   return response.data.data;
 };
 
-export const getEpaDashboardBoxplot = async (params) => {
-  const response = await api.post('/open-data/dashboard/boxplot', params);
+export const getEpaDashboardBoxplot = async ({ STID, ...params }) => {
+  const response = await api.get(`/epa/analytics/${STID}/boxplot`, {
+    params: params
+  });
+
   return response.data.data;
 };
 
-export const getEpaDashboardHeatmap = async (params) => {
-  const response = await api.post('/open-data/dashboard/heatmap', params);
+export const getEpaDashboardHeatmap = async ({ STID, ...params }) => {
+  const response = await api.get(`/epa/analytics/${STID}/heatmap`, {
+    params: params
+  });
+
   return response.data.data;
 };
 
-export const getEpaDashboardWindRose = async (params) => {
-  const response = await api.post('/open-data/dashboard/wind-rose', params);
+export const getEpaDashboardWindRose = async ({ STID, ...params }) => {
+  const response = await api.get(`/epa/analytics/${STID}/wind-rose`, {
+    params: params
+  });
+
   return response.data.data;
 };
 
-export const getEpaDashboardWindVector = async (params) => {
-  const response = await api.post('/open-data/dashboard/wind-vector', params);
+export const getEpaDashboardWindVector = async ({ STID, ...params }) => {
+  const response = await api.get(`/epa/analytics/${STID}/wind-vector`, {
+    params: params
+  });
+
   return response.data.data;
 };
 
