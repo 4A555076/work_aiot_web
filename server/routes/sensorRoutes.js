@@ -1638,7 +1638,7 @@ router.post('/sensors/replace', verifyToken, async (req, res) => {
 
     const query = `
             SELECT [ProjID],[STID],[IIT],[ParName1],[ParName2],[ParName3],[ParName4],[ParName5],[ParName6],[ParName7],[ParName8]
-            FROM [AIOT].[dbo].[ctrlStation] A (UPDLOCK, HOLDLOCK)
+            FROM [AIOT].[dbo].[ctrlStation] A WITH (UPDLOCK, HOLDLOCK)
             INNER JOIN [AIOT].[dbo].[cfgModel] B
                 ON A.Model = B.Model
             WHERE [ProjID] = @PJID
@@ -1650,7 +1650,7 @@ router.post('/sensors/replace', verifyToken, async (req, res) => {
             ORDER BY [dt_T] DESC;
         `;
 
-    const result = await aiotDb
+    const result = await transaction
       .request()
       .input('PJID', sql.VarChar, PJID)
       .input('station', sql.VarChar, STID)
