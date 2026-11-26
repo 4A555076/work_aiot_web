@@ -324,7 +324,6 @@ router.post('/stations/dashboard/realtime', verifyToken, async (req, res) => {
 });
 
 
-
 /**
  * @swagger
  * /aiot/analytics/{PJID}/{STID}/line:
@@ -504,7 +503,6 @@ router.get('/analytics/:PJID/:STID/line', verifyToken, async (req, res) => {
     });
   }
 });
-
 
 
 /**
@@ -725,7 +723,6 @@ router.get('/analytics/:PJID/:STID/boxplot', verifyToken, async (req, res) => {
     });
   }
 });
-
 
 
 /**
@@ -1074,7 +1071,6 @@ router.get('/analytics/:PJID/:STID/wind-rose', verifyToken, async (req, res) => 
 });
 
 
-
 /**
  * @swagger
  * /aiot/analytics/{PJID}/{STID}/wind-vector:
@@ -1235,21 +1231,6 @@ router.get('/analytics/:PJID/:STID/wind-vector', verifyToken, async (req, res) =
 });
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 // 測站日報表
 router.post('/stations/dashboard/daily-report', verifyToken, async (req, res) => {
   const { role } = req.user;
@@ -1262,9 +1243,11 @@ router.post('/stations/dashboard/daily-report', verifyToken, async (req, res) =>
     source: 'station',
     reportType: 'daily',
   });
+
   if (!validation.ok) {
     return res.status(validation.status).json(validation.response);
   }
+  
   const { PJID, STID, startDateTime, endDateTime, timeType, modelType } = validation.value;
 
   try {
@@ -1355,6 +1338,7 @@ router.post('/stations/dashboard/daily-report', verifyToken, async (req, res) =>
     });
   }
 });
+
 
 // 測站資料表
 router.post('/stations/dashboard/table', verifyToken, async (req, res) => {
@@ -1645,6 +1629,7 @@ router.post('/open-data/dashboard/realtime', verifyToken, async (req, res) => {
   }
 });
 
+
 /**
  * @swagger
  * /aiot/epa/analytics/{STID}/line:
@@ -1802,6 +1787,7 @@ router.get('/epa/analytics/:STID/line', verifyToken, async (req, res) => {
     });
   }
 });
+
 
 /**
  * @swagger
@@ -2000,6 +1986,7 @@ router.get('/epa/analytics/:STID/boxplot', verifyToken, async (req, res) => {
   }
 });
 
+
 /**
  * @swagger
  * /aiot/epa/analytics/{STID}/heatmap:
@@ -2146,6 +2133,7 @@ router.get('/epa/analytics/:STID/heatmap', verifyToken, async (req, res) => {
     });
   }
 });
+
 
 /**
  * @swagger
@@ -2298,6 +2286,7 @@ router.get('/epa/analytics/:STID/wind-rose', verifyToken, async (req, res) => {
     });
   }
 });
+
 
 /**
  * @swagger
@@ -2612,6 +2601,7 @@ router.post('/open-data/dashboard/table', verifyToken, async (req, res) => {
   }
 );
 
+
 router.post('/open-data/dashboard/daily-report', verifyToken, async (req, res) => {
   const validation = validateDashboardReportRequest(req.body, {
     source: 'epa',
@@ -2757,6 +2747,7 @@ router.post('/open-data/dashboard/daily-report', verifyToken, async (req, res) =
     });
   }
 });
+
 
 router.post('/open-data/dashboard/monthly-report', verifyToken, async (req, res) => {
   const validation = validateDashboardReportRequest(req.body, {
